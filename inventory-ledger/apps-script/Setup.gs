@@ -27,6 +27,7 @@ function setupAll() {
   ensureTabWithHeaders_(ss, TABS.ADJUST, HEADERS[TABS.ADJUST]);
   ensureTabWithHeaders_(ss, TABS.ENDING_ACTUAL, HEADERS[TABS.ENDING_ACTUAL]);
   ensureTabWithHeaders_(ss, TABS.UPLOAD_BATCH, HEADERS[TABS.UPLOAD_BATCH]);
+  ensureTabWithHeaders_(ss, TABS.UPLOAD_MAP, HEADERS[TABS.UPLOAD_MAP]);
 
   seedLinkConfigDefaults_();
   seedEntitiesIfEmpty_();

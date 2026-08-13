@@ -56,6 +56,9 @@ function doGet(e) {
       case 'uploads':
         data = listUploadBatches_();
         break;
+      case 'uploadmaps':
+        data = listUploadMaps_(e.parameter.type);
+        break;
       case 'skulookup':
         data = skuInfo_(e.parameter.code) || {};
         break;
@@ -122,6 +125,10 @@ function doPost(e) {
         data = bulkInsertTx_(payload.txType, payload.rows, payload.fileName, user); break;
       case 'upload.delete':
         data = deleteUploadBatch_(payload.배치ID, user); break;
+      case 'uploadmap.upsert':
+        data = upsertUploadMap_(payload, user); break;
+      case 'uploadmap.delete':
+        data = deleteUploadMap_(payload.id); break;
       default:
         throw new Error('알 수 없는 action입니다: ' + action);
     }

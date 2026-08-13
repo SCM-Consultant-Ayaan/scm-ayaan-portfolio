@@ -697,7 +697,7 @@ function normYm(v) {
   throw new Error('연월 형식을 알 수 없습니다: "' + s + '" (예: 2025-01)');
 }
 function rowHasExampleMarker(row) {
-  return Object.keys(row).some(function (k) { return String(row[k]).indexOf('예시') !== -1; });
+  return valuesHaveExampleMarker_(Object.values(row));
 }
 function exampleValueFor(spec) {
   switch (spec.type) {
@@ -714,47 +714,102 @@ function exampleValueFor(spec) {
   }
 }
 
+/** 필드 하나의 원본 값(raw)을 검증/변환한다. 헤더-이름 매칭 경로와 열-지정 매칭 경로가 공유한다. */
+function coerceField_(f, raw) {
+  var hasVal = raw !== undefined && raw !== null && String(raw).trim() !== '';
+  if (!hasVal) {
+    if (f.required) throw new Error('"' + f.friendly + '" 값이 비어있습니다.');
+    return f.default !== undefined ? f.default : '';
+  }
+  if (f.type === 'date') return normDate(raw);
+  if (f.type === 'ym') return normYm(raw);
+  if (f.type === 'entity') {
+    var ec = findEntityCodeByName(raw);
+    if (!ec) throw new Error('"' + f.friendly + '" 값 "' + raw + '"을(를) 법인마스터에서 찾을 수 없습니다.');
+    return ec;
+  }
+  if (f.type === 'warehouse') {
+    var wc = findWarehouseCodeByName(raw);
+    if (!wc) throw new Error('"' + f.friendly + '" 값 "' + raw + '"을(를) 창고마스터에서 찾을 수 없습니다.');
+    return wc;
+  }
+  if (f.type === 'sku') return String(raw).trim();
+  if (f.type === 'enum') {
+    var val = String(raw).trim();
+    if (f.options.indexOf(val) === -1) throw new Error('"' + f.friendly + '" 값은 ' + f.options.join('/') + ' 중 하나여야 합니다 (입력값: ' + raw + ')');
+    return val;
+  }
+  if (f.type === 'qty') {
+    var q = Number(raw);
+    if (!q || q <= 0) throw new Error('"' + f.friendly + '" 값은 0보다 큰 숫자여야 합니다 (입력값: ' + raw + ')');
+    return q;
+  }
+  if (f.type === 'signedQty') {
+    var sq = Number(raw);
+    if (!sq) throw new Error('"' + f.friendly + '" 값은 0이 아닌 숫자여야 합니다 (입력값: ' + raw + ')');
+    return sq;
+  }
+  return raw;
+}
+
+function crossCheckBulkRow_(txType, out) {
+  if (txType === '사간거래' && out['from법인코드'] === out['to법인코드']) throw new Error('출발 법인과 도착 법인이 같습니다.');
+  if (txType === '창고이동' && out['from창고코드'] === out['to창고코드']) throw new Error('출발 창고와 도착 창고가 같습니다.');
+}
+
+/** 표준 양식 경로 — row는 헤더 이름으로 키가 잡힌 객체. */
 function mapBulkRow(txType, row) {
   var spec = BULK_SPECS[txType];
   var out = {};
-  for (var i = 0; i < spec.length; i++) {
-    var f = spec[i];
-    var raw = row[f.friendly];
-    var hasVal = raw !== undefined && raw !== null && String(raw).trim() !== '';
-    if (!hasVal) {
-      if (f.required) throw new Error('"' + f.friendly + '" 값이 비어있습니다.');
-      out[f.key] = f.default !== undefined ? f.default : '';
-      continue;
-    }
-    if (f.type === 'date') out[f.key] = normDate(raw);
-    else if (f.type === 'ym') out[f.key] = normYm(raw);
-    else if (f.type === 'entity') {
-      var ec = findEntityCodeByName(raw);
-      if (!ec) throw new Error('"' + f.friendly + '" 값 "' + raw + '"을(를) 법인마스터에서 찾을 수 없습니다.');
-      out[f.key] = ec;
-    } else if (f.type === 'warehouse') {
-      var wc = findWarehouseCodeByName(raw);
-      if (!wc) throw new Error('"' + f.friendly + '" 값 "' + raw + '"을(를) 창고마스터에서 찾을 수 없습니다.');
-      out[f.key] = wc;
-    } else if (f.type === 'sku') out[f.key] = String(raw).trim();
-    else if (f.type === 'enum') {
-      var val = String(raw).trim();
-      if (f.options.indexOf(val) === -1) throw new Error('"' + f.friendly + '" 값은 ' + f.options.join('/') + ' 중 하나여야 합니다 (입력값: ' + raw + ')');
-      out[f.key] = val;
-    } else if (f.type === 'qty') {
-      var q = Number(raw);
-      if (!q || q <= 0) throw new Error('"' + f.friendly + '" 값은 0보다 큰 숫자여야 합니다 (입력값: ' + raw + ')');
-      out[f.key] = q;
-    } else if (f.type === 'signedQty') {
-      var sq = Number(raw);
-      if (!sq) throw new Error('"' + f.friendly + '" 값은 0이 아닌 숫자여야 합니다 (입력값: ' + raw + ')');
-      out[f.key] = sq;
-    } else out[f.key] = raw;
-  }
-  if (txType === '사간거래' && out['from법인코드'] === out['to법인코드']) throw new Error('출발 법인과 도착 법인이 같습니다.');
-  if (txType === '창고이동' && out['from창고코드'] === out['to창고코드']) throw new Error('출발 창고와 도착 창고가 같습니다.');
+  spec.forEach(function (f) { out[f.key] = coerceField_(f, row[f.friendly]); });
+  crossCheckBulkRow_(txType, out);
   return out;
 }
+
+/** 내 파일 형식 경로 — rowArr는 [값0, 값1, ...] 배열이고, colAssign은 {필드키: 열인덱스(0-based)}. */
+function mapBulkRowByColumns_(txType, rowArr, colAssign) {
+  var spec = BULK_SPECS[txType];
+  var out = {};
+  spec.forEach(function (f) {
+    var idx = colAssign[f.key];
+    var raw = (idx === undefined || idx === null) ? '' : rowArr[idx];
+    out[f.key] = coerceField_(f, raw);
+  });
+  crossCheckBulkRow_(txType, out);
+  return out;
+}
+
+function valuesHaveExampleMarker_(values) {
+  return values.some(function (v) { return String(v == null ? '' : v).indexOf('예시') !== -1; });
+}
+
+function colIndexToLetter(idx) {
+  var s = '';
+  idx += 1;
+  while (idx > 0) {
+    var rem = (idx - 1) % 26;
+    s = String.fromCharCode(65 + rem) + s;
+    idx = Math.floor((idx - 1) / 26);
+  }
+  return s;
+}
+function colLetterToIndex(letter) {
+  var s = String(letter || '').toUpperCase().trim();
+  var idx = 0;
+  for (var i = 0; i < s.length; i++) idx = idx * 26 + (s.charCodeAt(i) - 64);
+  return idx - 1;
+}
+function mapLettersToIndexes_(mapping) {
+  var out = {};
+  Object.keys(mapping || {}).forEach(function (k) { out[k] = colLetterToIndex(mapping[k]); });
+  return out;
+}
+function mapIndexesToLetters_(colAssign) {
+  var out = {};
+  Object.keys(colAssign).forEach(function (k) { out[k] = colIndexToLetter(colAssign[k]); });
+  return out;
+}
+function range_(n) { var a = []; for (var i = 0; i < n; i++) a.push(i); return a; }
 
 function downloadTemplate(txType) {
   var spec = BULK_SPECS[txType];
@@ -774,15 +829,37 @@ function renderBulkUploadSection() {
   if (!BULK_SPECS[currentTx]) { card.innerHTML = ''; return; }
   card.innerHTML =
     '<p class="section-title">엑셀 일괄 업로드</p>' +
+    '<div class="sub-tabs" id="bulkModeTabs">' +
+    '<button data-mode="standard" class="active">표준 양식</button>' +
+    '<button data-mode="custom">내 파일 형식 (매핑 저장)</button>' +
+    '</div>' +
+    '<div id="bulkStandardPane"></div>' +
+    '<div id="bulkCustomPane" style="display:none"></div>';
+  document.getElementById('bulkModeTabs').addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-mode]');
+    if (!btn) return;
+    document.querySelectorAll('#bulkModeTabs button').forEach(function (b) { b.classList.remove('active'); });
+    btn.classList.add('active');
+    document.getElementById('bulkStandardPane').style.display = btn.dataset.mode === 'standard' ? '' : 'none';
+    document.getElementById('bulkCustomPane').style.display = btn.dataset.mode === 'custom' ? '' : 'none';
+    if (btn.dataset.mode === 'custom') renderCustomUploadPane();
+  });
+  renderStandardUploadPane();
+  resetCustomMapState_();
+  pendingBulkPayloads = [];
+}
+
+function renderStandardUploadPane() {
+  var pane = document.getElementById('bulkStandardPane');
+  pane.innerHTML =
     '<div class="row">' +
     '<button class="btn" id="bulkTemplateBtn">📄 양식 다운로드</button>' +
     '<input type="file" id="bulkFileInput" accept=".xlsx,.xls">' +
     '</div>' +
-    '<p class="hint" style="margin-top:6px">양식의 2번째 행은 형식을 보여주는 예시입니다. 그대로 두고 업로드해도 자동으로 제외됩니다.</p>' +
+    '<p class="hint" style="margin-top:6px">헤더 이름이 양식과 정확히 같아야 인식됩니다(2번째 행은 예시라 자동으로 빠집니다). 거래처가 주는 파일 형식이 다르면 옆의 "내 파일 형식" 탭을 쓰세요.</p>' +
     '<div id="bulkPreviewWrap" style="margin-top:12px"></div>';
   document.getElementById('bulkTemplateBtn').onclick = function () { downloadTemplate(currentTx); };
   document.getElementById('bulkFileInput').onchange = handleBulkFile;
-  pendingBulkPayloads = [];
 }
 
 function handleBulkFile(e) {
@@ -844,6 +921,247 @@ function submitBulkUpload() {
     pendingBulkPayloads = [];
     loadTxList();
   }).catch(function (err) { alert('업로드 실패: ' + err.message); });
+}
+
+/* ================= 내 파일 형식 업로드 (열 매핑 저장) =================
+ * 거래처마다 자기 방식대로 내보내는 파일을 표준 양식으로 바꿔달라고 할 수 없으니,
+ * "이 열이 상품코드, 이 열이 수량"처럼 한 번 지정해두면(=매핑 저장) 다음부터는
+ * 같은 형식의 파일을 그대로 올릴 수 있게 한다.
+ */
+var customMapState = {};
+function resetCustomMapState_() {
+  customMapState = { profiles: [], selectedProfileId: '__new__', file: null, aoa: null, headerRow: 1, colAssign: {}, mapName: '', validRows: [] };
+}
+resetCustomMapState_();
+
+function renderCustomUploadPane() {
+  var pane = document.getElementById('bulkCustomPane');
+  pane.innerHTML = '<div class="row"><div class="field" style="flex:1"><label>저장된 업로드 형식</label><select id="mapProfileSelect" style="width:100%"></select></div></div>' +
+    '<div id="mapAreaWrap" style="margin-top:12px"></div>';
+  apiGet('uploadmaps', { type: currentTx }).then(function (profiles) {
+    customMapState.profiles = profiles;
+    var sel = document.getElementById('mapProfileSelect');
+    sel.innerHTML = '<option value="__new__">+ 새 매핑 만들기</option>' +
+      profiles.map(function (p) { return '<option value="' + p.id + '">' + p.매핑이름 + '</option>'; }).join('');
+    sel.value = customMapState.selectedProfileId;
+    sel.onchange = function () { switchMapProfile(sel.value); };
+    switchMapProfile(sel.value);
+  }).catch(function (err) {
+    document.getElementById('mapAreaWrap').innerHTML = '<div class="notice bad">' + err.message + '</div>';
+  });
+}
+
+function switchMapProfile(id) {
+  customMapState.selectedProfileId = id;
+  customMapState.file = null; customMapState.aoa = null; customMapState.validRows = [];
+  var wrap = document.getElementById('mapAreaWrap');
+  if (id === '__new__') {
+    customMapState.headerRow = 1; customMapState.colAssign = {}; customMapState.mapName = '';
+    wrap.innerHTML =
+      '<div class="row">' +
+      '<div class="field"><label>실제 파일 선택</label><input type="file" id="mapFileInput" accept=".xlsx,.xls"></div>' +
+      '<div class="field"><label>헤더 행</label><input type="number" id="mapHeaderRow" value="1" min="1" style="width:70px"></div>' +
+      '</div>' +
+      '<p class="hint" style="margin-top:6px">파일을 올리면 아래에 열(A, B, C...)이 나타납니다. 각 열 위 드롭다운에서 그 열이 어떤 항목인지 지정해주세요.</p>' +
+      '<div id="mapGridWrap" style="margin-top:12px"></div>' +
+      '<div id="mapPreviewWrap" style="margin-top:12px"></div>';
+    document.getElementById('mapFileInput').onchange = handleMapFile;
+    document.getElementById('mapHeaderRow').onchange = function (e) {
+      customMapState.headerRow = Math.max(1, Number(e.target.value) || 1);
+      renderMapGrid();
+    };
+  } else {
+    var profile = customMapState.profiles.find(function (p) { return String(p.id) === String(id); });
+    if (!profile) return;
+    wrap.innerHTML =
+      '<p class="hint">저장된 매핑 "' + profile.매핑이름 + '" 을 사용합니다. 같은 형식의 파일을 선택하면 자동으로 인식됩니다.</p>' +
+      '<div class="row">' +
+      '<div class="field"><label>파일 선택</label><input type="file" id="mapApplyFileInput" accept=".xlsx,.xls"></div>' +
+      '<div class="field"><button class="btn small" id="mapRemapBtn">다른 형식으로 다시 매핑</button></div>' +
+      '<div class="field"><button class="btn small danger" id="mapDeleteBtn">이 매핑 삭제</button></div>' +
+      '</div>' +
+      '<div id="mapPreviewWrap" style="margin-top:12px"></div>';
+    document.getElementById('mapApplyFileInput').onchange = function (e) { handleApplyProfileFile(e, profile); };
+    document.getElementById('mapRemapBtn').onclick = function () {
+      document.getElementById('mapProfileSelect').value = '__new__';
+      switchMapProfile('__new__');
+    };
+    document.getElementById('mapDeleteBtn').onclick = function () {
+      if (!confirm('매핑 "' + profile.매핑이름 + '"을(를) 삭제할까요?')) return;
+      apiPost('uploadmap.delete', { id: profile.id }).then(renderCustomUploadPane).catch(function (err) { alert(err.message); });
+    };
+  }
+}
+
+function handleMapFile(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  customMapState.file = file;
+  var reader = new FileReader();
+  reader.onload = function (ev) {
+    try {
+      var data = new Uint8Array(ev.target.result);
+      var wb = XLSX.read(data, { type: 'array', cellDates: true });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      customMapState.aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+      renderMapGrid();
+    } catch (err) {
+      alert('파일을 읽는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderMapGrid() {
+  var wrap = document.getElementById('mapGridWrap');
+  if (!wrap) return;
+  if (!customMapState.aoa) { wrap.innerHTML = ''; return; }
+  var aoa = customMapState.aoa;
+  var headerRowIdx = customMapState.headerRow - 1;
+  var headerRowVals = aoa[headerRowIdx] || [];
+  var sample1 = aoa[headerRowIdx + 1] || [];
+  var sample2 = aoa[headerRowIdx + 2] || [];
+  var colCount = Math.min(60, Math.max(headerRowVals.length, sample1.length, sample2.length, 1));
+  var spec = BULK_SPECS[currentTx];
+  var fieldOptions = '<option value="">—</option>' + spec.map(function (f) {
+    return '<option value="' + f.key + '">' + f.friendly + (f.required ? ' *' : '') + '</option>';
+  }).join('');
+
+  var html = '<div class="table-wrap"><table><thead><tr>' +
+    range_(colCount).map(function (i) { return '<th>' + colIndexToLetter(i) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+    '<tr>' + range_(colCount).map(function (i) { return '<td><select data-col="' + i + '" class="mapColSelect">' + fieldOptions + '</select></td>'; }).join('') + '</tr>' +
+    '<tr>' + range_(colCount).map(function (i) { return '<td class="hint">' + (headerRowVals[i] === undefined ? '' : headerRowVals[i]) + '</td>'; }).join('') + '</tr>' +
+    '<tr>' + range_(colCount).map(function (i) { return '<td class="hint">' + (sample1[i] === undefined ? '' : sample1[i]) + '</td>'; }).join('') + '</tr>' +
+    '<tr>' + range_(colCount).map(function (i) { return '<td class="hint">' + (sample2[i] === undefined ? '' : sample2[i]) + '</td>'; }).join('') + '</tr>' +
+    '</tbody></table></div>';
+  html += '<div class="row" style="margin-top:10px"><div class="field" style="flex:1"><label>이 매핑 이름 (예: 3PL 재고리포트)</label><input id="mapNameInput" style="width:100%" value="' + (customMapState.mapName || '').replace(/"/g, '&quot;') + '"></div></div>';
+  html += '<div id="mapRequiredWarn"></div>';
+  html += '<div class="row" style="margin-top:10px"><button class="btn primary" id="mapPreviewBtn">인식 결과 확인</button></div>';
+  wrap.innerHTML = html;
+
+  wrap.querySelectorAll('.mapColSelect').forEach(function (sel) {
+    var idx = Number(sel.dataset.col);
+    var assignedField = Object.keys(customMapState.colAssign).find(function (k) { return customMapState.colAssign[k] === idx; });
+    if (assignedField) sel.value = assignedField;
+    sel.onchange = function () {
+      var field = sel.value;
+      Object.keys(customMapState.colAssign).forEach(function (k) { if (customMapState.colAssign[k] === idx) delete customMapState.colAssign[k]; });
+      if (field) customMapState.colAssign[field] = idx;
+      renderMapGrid();
+    };
+  });
+  document.getElementById('mapNameInput').oninput = function (e) { customMapState.mapName = e.target.value; };
+  document.getElementById('mapPreviewBtn').onclick = previewMapUpload;
+}
+
+function previewMapUpload() {
+  var spec = BULK_SPECS[currentTx];
+  var missing = spec.filter(function (f) { return f.required && customMapState.colAssign[f.key] === undefined; });
+  var warnEl = document.getElementById('mapRequiredWarn');
+  if (missing.length) {
+    warnEl.innerHTML = '<div class="notice bad">아직 열을 지정하지 않은 필수 항목: ' + missing.map(function (f) { return f.friendly; }).join(', ') + '</div>';
+    return;
+  }
+  warnEl.innerHTML = '';
+  var dataRows = customMapState.aoa.slice(customMapState.headerRow);
+  var results = [];
+  var validRows = [];
+  dataRows.forEach(function (rowArr, i) {
+    var isBlank = rowArr.every(function (v) { return v === '' || v === undefined || v === null; });
+    if (isBlank) return;
+    if (valuesHaveExampleMarker_(rowArr)) { results.push({ i: i + customMapState.headerRow + 1, skip: true }); return; }
+    try {
+      validRows.push(mapBulkRowByColumns_(currentTx, rowArr, customMapState.colAssign));
+      results.push({ i: i + customMapState.headerRow + 1, ok: true });
+    } catch (err) {
+      results.push({ i: i + customMapState.headerRow + 1, ok: false, error: err.message });
+    }
+  });
+  customMapState.validRows = validRows;
+  renderMapPreview(results);
+}
+
+function renderMapPreview(results) {
+  var wrap = document.getElementById('mapPreviewWrap');
+  var okCount = results.filter(function (r) { return r.ok; }).length;
+  var errCount = results.filter(function (r) { return r.ok === false; }).length;
+  var skipCount = results.filter(function (r) { return r.skip; }).length;
+  var html = '<div class="notice ' + (errCount ? 'warn' : 'ok') + '">데이터 ' + results.length + '행 중 정상 ' + okCount + '행, 오류 ' + errCount + '행' +
+    (skipCount ? ', 예시행 제외 ' + skipCount + '행' : '') + '</div>';
+  html += '<div class="table-wrap"><table><thead><tr><th>행</th><th>상태</th></tr></thead><tbody>' +
+    results.map(function (r) {
+      if (r.skip) return '<tr><td>' + r.i + '</td><td class="hint">예시 행 (제외됨)</td></tr>';
+      return '<tr><td>' + r.i + '</td><td>' + (r.ok ? '<span style="color:var(--accent)">정상</span>' : '<span style="color:var(--bad)">오류: ' + r.error + '</span>') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  html += '<div class="row" style="margin-top:10px"><button class="btn primary" id="mapSaveBtn"' + (okCount ? '' : ' disabled') + '>저장 (매핑 저장 + ' + okCount + '행 업로드)</button></div>';
+  wrap.innerHTML = html;
+  if (okCount) document.getElementById('mapSaveBtn').onclick = saveMapAndUpload;
+}
+
+function saveMapAndUpload() {
+  if (!customMapState.mapName || !customMapState.mapName.trim()) { alert('매핑 이름을 입력해주세요.'); return; }
+  var lettersMap = mapIndexesToLetters_(customMapState.colAssign);
+  apiPost('uploadmap.upsert', { 거래유형: currentTx, 매핑이름: customMapState.mapName.trim(), 헤더행: customMapState.headerRow, 매핑: lettersMap })
+    .then(function () {
+      return apiPost('upload.bulk', { txType: currentTx, fileName: customMapState.file ? customMapState.file.name : '', rows: customMapState.validRows });
+    })
+    .then(function (data) {
+      alert('저장 완료: 매핑을 저장했고 ' + data.inserted + '행을 업로드했습니다.');
+      loadTxList();
+      renderCustomUploadPane();
+    })
+    .catch(function (err) { alert('오류: ' + err.message); });
+}
+
+function handleApplyProfileFile(e, profile) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var reader = new FileReader();
+  reader.onload = function (ev) {
+    try {
+      var data = new Uint8Array(ev.target.result);
+      var wb = XLSX.read(data, { type: 'array', cellDates: true });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
+      var colAssign = mapLettersToIndexes_(profile.매핑);
+      var dataRows = aoa.slice(profile.헤더행);
+      var results = [];
+      var validRows = [];
+      dataRows.forEach(function (rowArr, i) {
+        var isBlank = rowArr.every(function (v) { return v === '' || v === undefined || v === null; });
+        if (isBlank) return;
+        try {
+          validRows.push(mapBulkRowByColumns_(currentTx, rowArr, colAssign));
+          results.push({ i: i + profile.헤더행 + 1, ok: true });
+        } catch (err) {
+          results.push({ i: i + profile.헤더행 + 1, ok: false, error: err.message });
+        }
+      });
+      customMapState.validRows = validRows;
+      customMapState.file = file;
+      renderApplyPreview(results);
+    } catch (err) {
+      alert('파일을 읽는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderApplyPreview(results) {
+  var wrap = document.getElementById('mapPreviewWrap');
+  var okCount = results.filter(function (r) { return r.ok; }).length;
+  var errCount = results.filter(function (r) { return r.ok === false; }).length;
+  var html = '<div class="notice ' + (errCount ? 'warn' : 'ok') + '">데이터 ' + results.length + '행 중 정상 ' + okCount + '행, 오류 ' + errCount + '행</div>';
+  html += '<div class="table-wrap"><table><thead><tr><th>행</th><th>상태</th></tr></thead><tbody>' +
+    results.map(function (r) { return '<tr><td>' + r.i + '</td><td>' + (r.ok ? '<span style="color:var(--accent)">정상</span>' : '<span style="color:var(--bad)">오류: ' + r.error + '</span>') + '</td></tr>'; }).join('') +
+    '</tbody></table></div>';
+  html += '<div class="row" style="margin-top:10px"><button class="btn primary" id="applyConfirmBtn"' + (okCount ? '' : ' disabled') + '>업로드 확정 (' + okCount + '행)</button></div>';
+  wrap.innerHTML = html;
+  if (okCount) document.getElementById('applyConfirmBtn').onclick = function () {
+    apiPost('upload.bulk', { txType: currentTx, fileName: customMapState.file ? customMapState.file.name : '', rows: customMapState.validRows })
+      .then(function (data) { alert('업로드 완료: ' + data.inserted + '행 반영'); loadTxList(); })
+      .catch(function (err) { alert('오류: ' + err.message); });
+  };
 }
 
 /* ================= 업로드 관리 ================= */
