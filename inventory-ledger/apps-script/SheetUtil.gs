@@ -51,44 +51,60 @@ function readAllRows_(sheetOrName) {
  * FORCE_TEXT_HEADERS 에 있는 열은 값을 쓰기 전에 셀 서식을 "일반 텍스트"로 고정한다.
  * 서식을 먼저 지정하지 않으면 "0001"처럼 숫자로만 보이는 문자열을 Sheets가 자동으로
  * 숫자 1로 바꿔버려서 앞자리 0이 사라진다 — 이 경우 코드 비교(===)가 깨진다.
+ * idxMap은 헤더 이름 -> 실제 열 인덱스(0-based) 맵(headerIndexMap_ 결과)이다.
  */
-function forceTextFormatForRow_(sheet, rowNum, headers) {
-  headers.forEach(function (h, i) {
-    if (FORCE_TEXT_HEADERS.indexOf(h) !== -1) {
-      sheet.getRange(rowNum, i + 1).setNumberFormat('@');
+function forceTextFormatForRow_(sheet, rowNum, headers, idxMap) {
+  headers.forEach(function (h) {
+    if (FORCE_TEXT_HEADERS.indexOf(h) !== -1 && idxMap[h] !== undefined) {
+      sheet.getRange(rowNum, idxMap[h] + 1).setNumberFormat('@');
     }
   });
 }
 
-/** 표준 헤더 배열(HEADERS[tab])의 열 순서대로 obj 값을 뽑아 한 행을 append. */
+/**
+ * headers 배열 순서가 아니라, 시트에 실제로 있는 헤더 "이름"의 열 위치에 맞춰 값을 쓴다.
+ * 왜 중요한가: 탭이 만들어진 뒤 새 헤더가 추가되면 ensureTabWithHeaders_ 가 그 헤더를
+ * 맨 뒤에 붙이기 때문에, 코드의 HEADERS 배열 순서와 시트의 실제 열 순서가 달라질 수
+ * 있다. 예전에는 항상 1번째 열부터 순서대로 썼는데, 그러면 이 두 순서가 어긋나는
+ * 순간 값이 엉뚱한 열로 밀려 들어간다. 그래서 항상 실제 열 위치를 조회해서 그 위치에
+ * 정확히 쓴다.
+ */
 function appendRowByHeaders_(sheetOrName, headers, obj) {
   var sheet = typeof sheetOrName === 'string' ? getTab_(sheetOrName) : sheetOrName;
-  var row = headers.map(function (h) {
-    var v = obj[h];
-    return v === undefined || v === null ? '' : v;
-  });
+  var idxMap = headerIndexMap_(sheet);
+  var width = Math.max(sheet.getLastColumn(), headers.length);
   var rowNum = sheet.getLastRow() + 1;
-  forceTextFormatForRow_(sheet, rowNum, headers);
-  sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
+  var rowArr = new Array(width).fill('');
+  headers.forEach(function (h) {
+    if (idxMap[h] === undefined) return; // ensureTabWithHeaders_ 를 안 돌렸으면 무시(호출부에서 미리 보장해야 함)
+    var v = obj[h];
+    rowArr[idxMap[h]] = v === undefined || v === null ? '' : v;
+  });
+  forceTextFormatForRow_(sheet, rowNum, headers, idxMap);
+  sheet.getRange(rowNum, 1, 1, width).setValues([rowArr]);
 }
 
 /** id 컬럼 값으로 행을 찾아 obj의 값들로 갱신. 없으면 false 리턴(호출부에서 append 처리). */
 function updateRowById_(sheetOrName, headers, id, obj) {
   var sheet = typeof sheetOrName === 'string' ? getTab_(sheetOrName) : sheetOrName;
-  var idCol = headers.indexOf('id');
-  if (idCol === -1) throw new Error('id 헤더가 없는 탭에는 updateRowById_ 를 쓸 수 없습니다.');
+  var idxMap = headerIndexMap_(sheet);
+  var idCol = idxMap['id'];
+  if (idCol === undefined) throw new Error('id 헤더가 없는 탭에는 updateRowById_ 를 쓸 수 없습니다.');
   var lastRow = sheet.getLastRow();
   if (lastRow < 2) return false;
   var ids = sheet.getRange(2, idCol + 1, lastRow - 1, 1).getValues();
   for (var r = 0; r < ids.length; r++) {
     if (String(ids[r][0]) === String(id)) {
       var rowNum = r + 2;
-      var newRow = headers.map(function (h) {
+      var width = sheet.getLastColumn();
+      var rowArr = sheet.getRange(rowNum, 1, 1, width).getValues()[0]; // 매핑 안 된 기존 값은 그대로 보존
+      headers.forEach(function (h) {
+        if (idxMap[h] === undefined) return;
         var v = obj[h];
-        return v === undefined || v === null ? '' : v;
+        rowArr[idxMap[h]] = v === undefined || v === null ? '' : v;
       });
-      forceTextFormatForRow_(sheet, rowNum, headers);
-      sheet.getRange(rowNum, 1, 1, headers.length).setValues([newRow]);
+      forceTextFormatForRow_(sheet, rowNum, headers, idxMap);
+      sheet.getRange(rowNum, 1, 1, width).setValues([rowArr]);
       return true;
     }
   }
@@ -97,9 +113,10 @@ function updateRowById_(sheetOrName, headers, id, obj) {
 
 function deleteRowById_(sheetOrName, headers, id) {
   var sheet = typeof sheetOrName === 'string' ? getTab_(sheetOrName) : sheetOrName;
-  var idCol = headers.indexOf('id');
+  var idxMap = headerIndexMap_(sheet);
+  var idCol = idxMap['id'];
   var lastRow = sheet.getLastRow();
-  if (lastRow < 2) return false;
+  if (lastRow < 2 || idCol === undefined) return false;
   var ids = sheet.getRange(2, idCol + 1, lastRow - 1, 1).getValues();
   for (var r = 0; r < ids.length; r++) {
     if (String(ids[r][0]) === String(id)) {
