@@ -131,11 +131,35 @@
   <div class="step todo">
     <div class="step-head">
       <div class="num">6</div>
-      <h2>프론트엔드 배포 및 연결</h2>
+      <h2>Cloudflare Pages에 프론트엔드 올리기</h2>
       <span class="badge">해야 함</span>
     </div>
+    <p><b>방법 A — 파일 직접 업로드 (가장 간단, 처음엔 이걸 추천)</b></p>
     <ol>
-      <li>제가 보내드린 <code>index.html</code> 파일을 Cloudflare Pages(또는 원하시는 정적 호스팅)에 업로드</li>
+      <li><a href="https://dash.cloudflare.com" target="_blank">dash.cloudflare.com</a> 접속 후 로그인 (계정 없으면 무료 가입)</li>
+      <li>왼쪽 메뉴에서 <b>Workers & Pages</b> 클릭</li>
+      <li>우측 <b>Create application</b> (또는 <b>Create</b>) 버튼 클릭</li>
+      <li>상단 탭에서 <b>Pages</b> 선택 → <b>Upload assets</b>(직접 업로드) 선택</li>
+      <li>프로젝트 이름 입력 (예: <code>inventory-ledger</code>) → <b>Create project</b></li>
+      <li>제가 보내드린 <code>index.html</code> 파일을 업로드 영역에 드래그 앤 드롭
+        (파일명이 꼭 <code>index.html</code>이어야 하고, 폴더째 올리지 말고 파일 하나만 올리기)</li>
+      <li><b>Deploy site</b> 클릭 → 배포가 끝나면 <code>https://inventory-ledger-xxx.pages.dev</code> 같은 주소가 나옴</li>
+      <li>그 주소로 접속해서 페이지가 뜨는지 확인</li>
+    </ol>
+    <p style="margin-top:14px"><b>나중에 파일을 수정했을 때 다시 올리는 법</b></p>
+    <ol>
+      <li>Pages 프로젝트 페이지에서 <b>Deployments</b> 탭 → <b>Create deployment</b></li>
+      <li>새 <code>index.html</code>을 다시 드래그 앤 드롭 → <b>Deploy</b></li>
+    </ol>
+    <p style="margin-top:14px"><b>방법 B — GitHub 연동 (이미 이 파일이 GitHub 저장소에 올라가 있어서, 나중에 자동배포를 원하시면)</b></p>
+    <ol>
+      <li>위 4번 단계에서 "Upload assets" 대신 <b>Connect to Git</b> 선택</li>
+      <li><code>scm-ayaan-portfolio</code> 저장소와 <code>claude/multi-entity-warehouse-inventory-ytc11o</code>(또는 병합 후 main) 브랜치 선택</li>
+      <li>빌드 설정에서 "Build command"는 비워두고, "Build output directory"를 <code>inventory-ledger/frontend</code>로 지정</li>
+      <li>저장하면 그 뒤로는 GitHub에 새로 push할 때마다 자동으로 재배포됨</li>
+    </ol>
+    <p style="margin-top:14px">배포 후:</p>
+    <ol>
       <li>배포된 페이지 접속 → 우측 상단 <b>설정</b> 탭 클릭</li>
       <li>"Apps Script 웹앱 URL" 칸에 5단계에서 복사한 URL 붙여넣고 저장</li>
       <li>우측 상단 <b>관리자 로그인</b>으로 4단계에서 만든 비밀번호 입력</li>
