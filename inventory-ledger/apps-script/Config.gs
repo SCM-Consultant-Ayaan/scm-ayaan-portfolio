@@ -31,14 +31,14 @@ HEADERS[TABS.WAREHOUSE] = ['창고코드', '창고명', '국내외구분', '사�
 HEADERS[TABS.FX] = ['통화코드', 'KRW환율', '기준일자', 'updatedAt'];
 HEADERS[TABS.LINK_CONFIG] = ['항목', '값', '설명'];
 HEADERS[TABS.SEED_STOCK] = ['id', '법인코드', '창고코드', '상품코드', '시작연월', '기초수량', '기초단가', '메모', 'updatedAt', 'updatedBy'];
-HEADERS[TABS.IN_MANUAL] = ['id', '적용일자', '입력일자', '법인코드', '창고코드', '상품코드', '세부구분', '수량', '메모', 'updatedAt', 'updatedBy', '배치ID'];
-HEADERS[TABS.OUT] = ['id', '적용일자', '입력일자', '법인코드', '창고코드', '상품코드', '세부구분', '수량', '출처', '메모', 'updatedAt', 'updatedBy', '배치ID'];
-HEADERS[TABS.DISPOSAL] = ['id', '적용일자', '입력일자', '법인코드', '창고코드', '상품코드', '수량', '사유', 'updatedAt', 'updatedBy', '배치ID'];
-HEADERS[TABS.DONATION] = ['id', '적용일자', '입력일자', '법인코드', '창고코드', '상품코드', '수량', '수혜처', 'updatedAt', 'updatedBy', '배치ID'];
-HEADERS[TABS.INTERCO] = ['id', '적용일자', '입력일자', 'from법인코드', 'to법인코드', '창고코드', '상품코드', '수량', '메모', 'updatedAt', 'updatedBy', '배치ID'];
-HEADERS[TABS.TRANSFER] = ['id', '적용일자', '입력일자', '법인코드', 'from창고코드', 'to창고코드', '상품코드', '수량', '메모', 'updatedAt', 'updatedBy', '배치ID'];
-HEADERS[TABS.ADJUST] = ['id', '적용일자', '입력일자', '법인코드', '창고코드', '상품코드', '구분', '증감수량', '사유', 'updatedAt', 'updatedBy', '배치ID'];
-HEADERS[TABS.ENDING_ACTUAL] = ['id', '연월', '입력일자', '법인코드', '창고코드', '상품코드', '실측수량', '출처', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.IN_MANUAL] = ['id', '입력일자', '적용일자', '법인코드', '창고코드', '상품코드', '세부구분', '수량', '메모', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.OUT] = ['id', '입력일자', '적용일자', '법인코드', '창고코드', '상품코드', '세부구분', '수량', '출처', '메모', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.DISPOSAL] = ['id', '입력일자', '적용일자', '법인코드', '창고코드', '상품코드', '수량', '사유', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.DONATION] = ['id', '입력일자', '적용일자', '법인코드', '창고코드', '상품코드', '수량', '수혜처', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.INTERCO] = ['id', '입력일자', '적용일자', 'from법인코드', 'to법인코드', '창고코드', '상품코드', '수량', '메모', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.TRANSFER] = ['id', '입력일자', '적용일자', '법인코드', 'from창고코드', 'to창고코드', '상품코드', '수량', '메모', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.ADJUST] = ['id', '입력일자', '적용일자', '법인코드', '창고코드', '상품코드', '구분', '증감수량', '사유', 'updatedAt', 'updatedBy', '배치ID'];
+HEADERS[TABS.ENDING_ACTUAL] = ['id', '입력일자', '연월', '법인코드', '창고코드', '상품코드', '실측수량', '출처', 'updatedAt', 'updatedBy', '배치ID'];
 HEADERS[TABS.UPLOAD_BATCH] = ['배치ID', '거래유형', '파일명', '행수', '업로드일시', '업로드자', '상태', '삭제일시', '삭제자'];
 /**
  * 거래처마다 자기 방식대로 내보내는 원본 파일(3PL 재고 리포트 등)을 매번 우리 표준
@@ -54,10 +54,15 @@ HEADERS[TABS.UPLOAD_MAP] = ['id', '거래유형', '매핑이름', '헤더행', '
  * (예: "0001" -> 1) 앞자리 0이 사라지고, 그 결과 코드 비교(===)가 깨져 중복행이 생기거나
  * SKU 매핑이 안 맞는 문제가 생긴다. appendRowByHeaders_/updateRowById_ 가 이 목록에 있는
  * 열은 쓰기 전에 셀 서식을 "일반 텍스트"로 고정한다.
+ *
+ * 날짜성 열("2025-01-19" 같은 문자열)도 같은 이유로 포함한다 — 텍스트로 고정하지 않으면
+ * Sheets가 자동으로 진짜 날짜 타입으로 바꿔버리고, 그걸 다시 읽으면 Apps Script가
+ * "2025-01-19T15:00:00.000Z"처럼 시간대가 섞인 긴 문자열로 돌려준다.
  */
 var FORCE_TEXT_HEADERS = [
   'id', '배치ID', '창고코드', '법인코드', '상품코드', '통화코드',
   'from법인코드', 'to법인코드', 'from창고코드', 'to창고코드',
+  '입력일자', '적용일자', '연월', '시작연월', '기준일자',
 ];
 
 var ENUM = {

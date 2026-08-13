@@ -9,10 +9,22 @@
  * 다음 동기화 때 자동으로 포함된다.
  */
 
+/**
+ * 요청 1건 동안은 메모리에, 그 이후에는 CacheService에 2분간 캐시한다 — 외부
+ * 스프레드시트를 매번 새로 여는 게 눈에 띄게 느리기 때문이다. 발주내역_관리시트를
+ * 방금 고쳤는데 바로 반영하고 싶으면 설정 화면의 "캐시 지우기"를 쓰면 된다.
+ */
 var _poRowsCache = null;
+var PO_CACHE_KEY_ = 'poInboundCacheV1';
+var PO_CACHE_TTL_SEC_ = 120;
 
 function fetchPurchaseInbound_() {
   if (_poRowsCache) return _poRowsCache;
+  _poRowsCache = cachedJson_(PO_CACHE_KEY_, PO_CACHE_TTL_SEC_, fetchPurchaseInboundLive_);
+  return _poRowsCache;
+}
+
+function fetchPurchaseInboundLive_() {
   var cfg = linkConfigMap_();
   var ssid = cfg['PO_SSID'];
   if (!ssid) throw new Error('[연동설정] 탭의 PO_SSID 값이 비어있습니다. 발주내역_관리시트 ID를 채워주세요.');
@@ -72,7 +84,6 @@ function fetchPurchaseInbound_() {
       });
     });
   }
-  _poRowsCache = out;
   return out;
 }
 

@@ -131,6 +131,32 @@ function newId_() {
   return Utilities.getUuid();
 }
 
+/**
+ * 외부 스프레드시트(발주내역_관리시트 / SKU 매핑 시트)를 여는 SpreadsheetApp.openById는
+ * 요청마다 새로 열면 눈에 띄게 느리다. 이 두 시트는 이 툴이 직접 쓰는 게 아니라 읽기만
+ * 하는 원본이라, 짧은 시간(TTL)만큼은 스크립트 전체가 공유하는 캐시에 담아두고 재사용한다.
+ * producerFn()의 결과가 100KB를 넘어 캐시에 못 들어가도(put 실패), 그냥 캐시 없이 계속 동작한다.
+ */
+function cachedJson_(key, ttlSec, producerFn) {
+  var cache = CacheService.getScriptCache();
+  var cached = cache.get(key);
+  if (cached) {
+    try { return JSON.parse(cached); } catch (e) { /* 손상된 캐시면 무시하고 새로 계산 */ }
+  }
+  var value = producerFn();
+  try { cache.put(key, JSON.stringify(value), ttlSec); } catch (e) { /* 너무 크면 캐시 생략 */ }
+  return value;
+}
+
+var EXTERNAL_CACHE_KEYS_ = ['skuMapCacheV1', 'poInboundCacheV1'];
+
+/** 설정 화면의 "캐시 지우기" 버튼이 호출한다 — SKU매핑/발주내역 원본을 방금 고쳤을 때 바로 반영하고 싶을 때 쓴다. */
+function clearExternalCaches_() {
+  var cache = CacheService.getScriptCache();
+  EXTERNAL_CACHE_KEYS_.forEach(function (k) { cache.remove(k); });
+  return { cleared: EXTERNAL_CACHE_KEYS_.length };
+}
+
 function nowIso_() {
   return new Date().toISOString();
 }
@@ -157,26 +183,46 @@ function ymCompare_(a, b) {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
-/** 시트가 없으면 만들고 헤더를 쓴다. 이미 있으면 헤더만 확인(없는 헤더는 append). */
+/**
+ * 시트가 없으면 만들고 헤더를 쓴다. 이미 있으면 코드가 정한 순서·구성과 정확히
+ * 같아지도록 맞춘다:
+ *   - 코드에 있는데 시트에 없는 헤더는 새로 추가된다.
+ *   - 시트에는 있는데 코드에는 이제 없는 헤더(예전에 쓰다 만 "일자" 같은 열)는 버려진다.
+ *   - 열 순서 자체도 코드가 정한 순서로 재배치된다.
+ * 값은 항상 "헤더 이름"으로 옮기기 때문에(위치가 아니라), 어떤 순서로 섞여 있었든
+ * 각 값은 자기 헤더를 정확히 따라간다 — 절대 밀리지 않는다.
+ */
 function ensureTabWithHeaders_(ss, tabName, headers) {
   var sh = ss.getSheetByName(tabName);
   if (!sh) {
     sh = ss.insertSheet(tabName);
   }
   var lastCol = sh.getLastColumn();
-  var existing = lastCol > 0 ? sh.getRange(1, 1, 1, lastCol).getValues()[0] : [];
-  var existingSet = {};
-  existing.forEach(function (h) { existingSet[String(h).trim()] = true; });
-  var missing = headers.filter(function (h) { return !existingSet[h]; });
-  if (existing.length === 0) {
+  var lastRow = sh.getLastRow();
+  var existingHeaders = lastCol > 0 ? sh.getRange(1, 1, 1, lastCol).getValues()[0].map(function (h) { return String(h).trim(); }) : [];
+  var sameLayout = existingHeaders.length === headers.length && headers.every(function (h, i) { return existingHeaders[i] === h; });
+
+  if (existingHeaders.length === 0) {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]);
-  } else if (missing.length) {
-    sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
+  } else if (!sameLayout) {
+    var oldIdx = {};
+    existingHeaders.forEach(function (h, i) { if (h) oldIdx[h] = i; });
+    var dataRows = lastRow > 1 ? sh.getRange(2, 1, lastRow - 1, existingHeaders.length).getValues() : [];
+    var newData = dataRows.map(function (row) {
+      return headers.map(function (h) {
+        var oi = oldIdx[h];
+        return oi !== undefined && oi < row.length ? row[oi] : '';
+      });
+    });
+    sh.clearContents();
+    sh.getRange(1, 1, 1, headers.length).setValues([headers]);
+    if (newData.length) sh.getRange(2, 1, newData.length, headers.length).setValues(newData);
   }
+
   sh.setFrozenRows(1);
 
-  // 코드성 열은 전체 컬럼을 "일반 텍스트" 서식으로 고정해서, 앞으로 이 스크립트를 통해서든
-  // 사람이 시트에 직접 입력해서든 "0001" 같은 값이 숫자로 바뀌지 않도록 한다.
+  // 코드성/날짜성 열은 전체 컬럼을 "일반 텍스트" 서식으로 고정해서, 앞으로 이 스크립트를
+  // 통해서든 사람이 시트에 직접 입력해서든 값이 숫자나 날짜 타입으로 바뀌지 않도록 한다.
   headers.forEach(function (h, i) {
     if (FORCE_TEXT_HEADERS.indexOf(h) !== -1) {
       sh.getRange(2, i + 1, Math.max(sh.getMaxRows() - 1, 1), 1).setNumberFormat('@');

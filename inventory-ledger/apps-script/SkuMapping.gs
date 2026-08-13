@@ -16,11 +16,22 @@ function linkConfigMap_() {
   return map;
 }
 
-/** 캐시 없이 매번 새로 읽으면 다창고 화면에서 느려지므로, 요청 1건(=스크립트 실행 1회) 동안만 메모리에 캐시. */
+/**
+ * 요청 1건(=스크립트 실행 1회) 동안은 메모리에, 그 이후에는 CacheService에 3분간
+ * 캐시한다 — 외부 스프레드시트를 매번 새로 여는 게 눈에 띄게 느리기 때문이다. SKU
+ * 매핑 시트를 방금 고쳤는데 바로 반영하고 싶으면 설정 화면의 "캐시 지우기"를 쓰면 된다.
+ */
 var _skuMapCache = null;
+var SKU_MAP_CACHE_KEY_ = 'skuMapCacheV1';
+var SKU_MAP_CACHE_TTL_SEC_ = 180;
 
 function getSkuMap_() {
   if (_skuMapCache) return _skuMapCache;
+  _skuMapCache = cachedJson_(SKU_MAP_CACHE_KEY_, SKU_MAP_CACHE_TTL_SEC_, fetchSkuMapLive_);
+  return _skuMapCache;
+}
+
+function fetchSkuMapLive_() {
   var cfg = linkConfigMap_();
   var ssid = cfg['SKU_SSID'];
   if (!ssid) throw new Error('[연동설정] 탭의 SKU_SSID 값이 비어있습니다. SKU 매핑 시트 ID를 채워주세요.');
@@ -66,8 +77,7 @@ function getSkuMap_() {
       };
     });
   }
-  _skuMapCache = { map: map, unmapped: unmapped };
-  return _skuMapCache;
+  return { map: map, unmapped: unmapped };
 }
 
 function skuInfo_(code) {

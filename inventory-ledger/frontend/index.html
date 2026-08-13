@@ -135,6 +135,12 @@
       <p>거래 입력은 관리자 로그인 후 가능합니다. 우측 상단에서 로그인해주세요.</p>
     </div>
     <div id="inputForms" style="display:none">
+      <div class="card">
+        <p class="section-title">여러 파일 한번에 업로드</p>
+        <p class="hint">파일 이름이 거래유형으로 시작하면(예: "입고_1월.xlsx", "출고 데이터.xlsx") 자동으로 맞는 유형에 반영됩니다. 각 파일은 그 유형의 "표준 양식" 헤더와 같아야 인식됩니다.</p>
+        <input type="file" id="multiFileInput" multiple accept=".xlsx,.xls">
+        <div id="multiUploadPreviewWrap" style="margin-top:12px"></div>
+      </div>
       <div class="sub-tabs" id="txTabs">
         <button data-tx="입고" class="active">입고</button>
         <button data-tx="출고">출고</button>
@@ -199,6 +205,12 @@
         <div class="field"><button class="btn primary" id="apiUrlSave">저장</button></div>
       </div>
       <p class="hint">배포한 Apps Script 웹앱의 실행 URL을 여기에 붙여넣으면 이 브라우저에 저장됩니다.</p>
+    </div>
+
+    <div class="card">
+      <p class="section-title">연동 캐시</p>
+      <p class="hint">발주내역_관리시트·SKU 매핑 시트는 매번 새로 열면 느려서 최대 몇 분간 캐시해둡니다. 방금 그 시트를 고쳤는데 바로 반영하고 싶으면 눌러주세요.</p>
+      <button class="btn" id="cacheClearBtn">캐시 지우기</button>
     </div>
 
     <div class="card">
@@ -1171,6 +1183,108 @@ function renderApplyPreview(results) {
   };
 }
 
+/* ================= 여러 파일 한번에 업로드 =================
+ * 파일 이름이 거래유형 이름으로 시작하면(예: "출고_1월.xlsx") 그 유형으로 자동 매칭한다.
+ * 각 파일은 표준 양식(헤더 이름 매칭) 경로로 파싱한다 — 매핑 저장이 필요한 파일 형식이면
+ * 거래 입력 탭 안의 "내 파일 형식"을 쓰면 된다.
+ */
+var TX_TYPE_KEYS_BY_LENGTH_ = Object.keys(BULK_SPECS).sort(function (a, b) { return b.length - a.length; });
+var multiUploadState = { groups: {} };
+
+function matchTxTypeFromFilename_(filename) {
+  var base = filename.replace(/\.(xlsx|xls)$/i, '').trim();
+  for (var i = 0; i < TX_TYPE_KEYS_BY_LENGTH_.length; i++) {
+    if (base.indexOf(TX_TYPE_KEYS_BY_LENGTH_[i]) === 0) return TX_TYPE_KEYS_BY_LENGTH_[i];
+  }
+  return null;
+}
+
+function handleMultiFileInput(e) {
+  var files = Array.prototype.slice.call(e.target.files || []);
+  multiUploadState.groups = {};
+  if (!files.length) return;
+  var unmatched = [];
+  var pending = files.length;
+
+  files.forEach(function (file) {
+    var type = matchTxTypeFromFilename_(file.name);
+    if (!type) {
+      unmatched.push(file.name);
+      pending--;
+      if (pending === 0) renderMultiUploadPreview(unmatched);
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function (ev) {
+      try {
+        var data = new Uint8Array(ev.target.result);
+        var wb = XLSX.read(data, { type: 'array', cellDates: true });
+        var ws = wb.Sheets[wb.SheetNames[0]];
+        var rawRows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+        var validRows = [];
+        var errCount = 0, skipCount = 0;
+        rawRows.forEach(function (row) {
+          if (rowHasExampleMarker(row)) { skipCount++; return; }
+          try { validRows.push(mapBulkRow(type, row)); } catch (err) { errCount++; }
+        });
+        multiUploadState.groups[type] = { fileName: file.name, valid: validRows, errCount: errCount, skipCount: skipCount };
+      } catch (err) {
+        multiUploadState.groups[type] = { fileName: file.name, error: err.message };
+      }
+      pending--;
+      if (pending === 0) renderMultiUploadPreview(unmatched);
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+function renderMultiUploadPreview(unmatched) {
+  var wrap = document.getElementById('multiUploadPreviewWrap');
+  var html = '';
+  if (unmatched.length) {
+    html += '<div class="notice warn">파일명으로 거래유형을 알 수 없어 제외됨: ' + unmatched.join(', ') +
+      ' (파일명이 입고/출고/폐기/기부/사간거래/창고이동/재고조정/기말재고실측 중 하나로 시작해야 합니다)</div>';
+  }
+  var types = Object.keys(multiUploadState.groups);
+  if (!types.length) { wrap.innerHTML = html || '<div class="notice bad">인식된 파일이 없습니다.</div>'; return; }
+
+  html += '<div class="table-wrap"><table><thead><tr><th>거래유형</th><th>파일명</th><th class="num">정상</th><th class="num">오류</th><th class="num">예시제외</th></tr></thead><tbody>' +
+    types.map(function (t) {
+      var g = multiUploadState.groups[t];
+      if (g.error) return '<tr><td>' + t + '</td><td>' + g.fileName + '</td><td colspan="3" class="hint">읽기 오류: ' + g.error + '</td></tr>';
+      return '<tr><td>' + t + '</td><td>' + g.fileName + '</td><td class="num">' + g.valid.length + '</td><td class="num">' + g.errCount + '</td><td class="num">' + g.skipCount + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+
+  var totalValid = types.reduce(function (sum, t) { var g = multiUploadState.groups[t]; return sum + (g.valid ? g.valid.length : 0); }, 0);
+  html += '<div class="row" style="margin-top:10px"><button class="btn primary" id="multiConfirmBtn"' + (totalValid ? '' : ' disabled') + '>전체 업로드 (총 ' + totalValid + '행)</button></div>';
+  wrap.innerHTML = html;
+  if (totalValid) document.getElementById('multiConfirmBtn').onclick = submitMultiUpload;
+}
+
+function submitMultiUpload() {
+  var types = Object.keys(multiUploadState.groups).filter(function (t) {
+    var g = multiUploadState.groups[t];
+    return g.valid && g.valid.length;
+  });
+  var results = [];
+  var chain = Promise.resolve();
+  types.forEach(function (t) {
+    chain = chain.then(function () {
+      var g = multiUploadState.groups[t];
+      return apiPost('upload.bulk', { txType: t, fileName: g.fileName, rows: g.valid })
+        .then(function (data) { results.push(t + ': ' + data.inserted + '행 반영'); })
+        .catch(function (err) { results.push(t + ': 실패 (' + err.message + ')'); });
+    });
+  });
+  chain.then(function () {
+    alert('일괄 업로드 완료\n\n' + results.join('\n'));
+    document.getElementById('multiUploadPreviewWrap').innerHTML = '';
+    document.getElementById('multiFileInput').value = '';
+    multiUploadState.groups = {};
+    loadTxList();
+  });
+}
+
 /* ================= 업로드 관리 ================= */
 document.getElementById('uploadsRefresh').onclick = loadUploads;
 
@@ -1285,6 +1399,9 @@ document.getElementById('apiUrlSave').onclick = function () {
   loadMasters().then(loadWarnings);
   alert('저장했습니다.');
 };
+document.getElementById('cacheClearBtn').onclick = function () {
+  apiPost('cache.clear', {}).then(function () { alert('캐시를 지웠습니다.'); }).catch(function (err) { alert(err.message); });
+};
 
 function renderMasterTables() {
   var eBody = document.querySelector('#entityTable tbody');
@@ -1360,6 +1477,7 @@ document.getElementById('checkYm').value = currentYm();
 refreshAdminUi();
 renderTxForm();
 renderBulkUploadSection();
+document.getElementById('multiFileInput').onchange = handleMultiFileInput;
 if (apiUrl()) {
   loadMasters().then(function () {
     loadWarnings();

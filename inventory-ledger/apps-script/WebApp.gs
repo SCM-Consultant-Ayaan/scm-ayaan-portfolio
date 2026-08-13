@@ -129,6 +129,8 @@ function doPost(e) {
         data = upsertUploadMap_(payload, user); break;
       case 'uploadmap.delete':
         data = deleteUploadMap_(payload.id); break;
+      case 'cache.clear':
+        data = clearExternalCaches_(); break;
       default:
         throw new Error('알 수 없는 action입니다: ' + action);
     }
