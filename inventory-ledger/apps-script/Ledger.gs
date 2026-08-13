@@ -43,24 +43,24 @@ function buildLedgerEvents_() {
 
   readAllRows_(TABS.IN_MANUAL).forEach(function (r) {
     var type = r['세부구분'] === '무상입고' ? '무상매입' : '반품입고';
-    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['일자']), 유형: type, 수량: Number(r['수량']) });
+    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['적용일자']), 유형: type, 수량: Number(r['수량']) });
   });
 
   readAllRows_(TABS.OUT).forEach(function (r) {
     var type = r['세부구분'] === '판매출고' ? '판매출고' : '기타출고';
-    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['일자']), 유형: type, 수량: Number(r['수량']) });
+    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['적용일자']), 유형: type, 수량: Number(r['수량']) });
   });
 
   readAllRows_(TABS.DISPOSAL).forEach(function (r) {
-    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['일자']), 유형: '폐기', 수량: Number(r['수량']) });
+    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['적용일자']), 유형: '폐기', 수량: Number(r['수량']) });
   });
 
   readAllRows_(TABS.DONATION).forEach(function (r) {
-    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['일자']), 유형: '기부', 수량: Number(r['수량']) });
+    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['적용일자']), 유형: '기부', 수량: Number(r['수량']) });
   });
 
   readAllRows_(TABS.INTERCO).forEach(function (r) {
-    var ym = toYm_(r['일자']);
+    var ym = toYm_(r['적용일자']);
     var qty = Number(r['수량']);
     events.push({ 법인코드: r['from법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: ym, 유형: '사간거래OUT', 수량: qty });
     events.push({
@@ -70,7 +70,7 @@ function buildLedgerEvents_() {
   });
 
   readAllRows_(TABS.TRANSFER).forEach(function (r) {
-    var ym = toYm_(r['일자']);
+    var ym = toYm_(r['적용일자']);
     var qty = Number(r['수량']);
     events.push({ 법인코드: r['법인코드'], 창고코드: r['from창고코드'], 상품코드: r['상품코드'], 연월: ym, 유형: '창고이동OUT', 수량: qty });
     events.push({
@@ -80,7 +80,7 @@ function buildLedgerEvents_() {
   });
 
   readAllRows_(TABS.ADJUST).forEach(function (r) {
-    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['일자']), 유형: '재고조정', 수량: Number(r['증감수량']) });
+    events.push({ 법인코드: r['법인코드'], 창고코드: r['창고코드'], 상품코드: r['상품코드'], 연월: toYm_(r['적용일자']), 유형: '재고조정', 수량: Number(r['증감수량']) });
   });
 
   return { events: events, fxWarnings: fxWarnings };

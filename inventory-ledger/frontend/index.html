@@ -4,6 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>다법인·다창고 재고수불부</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
   :root {
     --bg: #f3f1ea;
@@ -79,6 +80,7 @@
     <button data-panel="dashboard" class="active">수불부 대시보드</button>
     <button data-panel="skudetail">SKU 상세</button>
     <button data-panel="input">거래 입력</button>
+    <button data-panel="uploads">업로드 관리</button>
     <button data-panel="valuecheck">재고금액 검증</button>
     <button data-panel="settings">설정</button>
   </nav>
@@ -100,7 +102,9 @@
         <div class="field"><label>법인</label><select id="dashEntity"><option value="ALL">전체 합산</option></select></div>
         <div class="field"><label>창고</label><select id="dashWarehouse"><option value="ALL">전체 합산</option></select></div>
         <div class="field"><button class="btn primary" id="dashLoad">조회</button></div>
+        <div class="field"><button class="btn" id="dashExport">📥 엑셀 다운로드 (월별 전체)</button></div>
       </div>
+      <p class="hint" style="margin-top:8px">엑셀 다운로드는 조회 시작월부터 선택한 연월까지 모든 달을 한 시트에 나란히 담습니다.</p>
     </div>
     <div class="card">
       <p class="section-title">법인 × 창고 × 월별 수불부</p>
@@ -142,6 +146,7 @@
         <button data-tx="기말재고실측">기말재고 실측</button>
       </div>
       <div class="card" id="txFormCard"></div>
+      <div class="card" id="txBulkCard"></div>
       <div class="card">
         <p class="section-title">최근 입력 내역</p>
         <div class="row" style="margin-bottom:10px">
@@ -149,6 +154,16 @@
         </div>
         <div class="table-wrap"><table id="txListTable"><thead></thead><tbody></tbody></table></div>
       </div>
+    </div>
+  </section>
+
+  <!-- ================= 업로드 관리 ================= -->
+  <section class="panel" id="panel-uploads">
+    <div class="card">
+      <p class="section-title">엑셀 업로드 이력</p>
+      <p class="hint">여기서 지우면 그 업로드로 들어온 거래 행이 전부 삭제됩니다(관리자만 가능). 되돌릴 수 없으니 신중하게 눌러주세요.</p>
+      <div class="row" style="margin-bottom:10px"><button class="btn small" id="uploadsRefresh">새로고침</button></div>
+      <div class="table-wrap"><table id="uploadsTable"><thead></thead><tbody></tbody></table></div>
     </div>
   </section>
 
@@ -285,6 +300,7 @@ document.getElementById('mainTabs').addEventListener('click', function (e) {
   btn.classList.add('active');
   document.querySelectorAll('.panel').forEach(function (p) { p.classList.remove('active'); });
   document.getElementById('panel-' + btn.dataset.panel).classList.add('active');
+  if (btn.dataset.panel === 'uploads') loadUploads();
 });
 
 /* ---------------- 로그인 ---------------- */
@@ -431,6 +447,7 @@ document.getElementById('txTabs').addEventListener('click', function (e) {
   btn.classList.add('active');
   currentTx = btn.dataset.tx;
   renderTxForm();
+  renderBulkUploadSection();
   loadTxList();
 });
 document.getElementById('txRefresh').onclick = loadTxList;
@@ -442,10 +459,14 @@ function selHtml(id, label, options) {
 function entityOptions() { return MASTERS.entities.filter(function (e) { return e['사용여부'] !== 'N'; }).map(function (e) { return { v: e['법인코드'], t: e['법인명'] }; }); }
 function warehouseOptions() { return MASTERS.warehouses.filter(function (w) { return w['사용여부'] !== 'N'; }).map(function (w) { return { v: w['창고코드'], t: w['창고명'] }; }); }
 
+var PURCHASE_INBOUND_NOTICE = '구매입고는 [발주내역_관리시트]의 입고내역 탭에서 자동으로 반영됩니다. 이 화면에서 직접 입력·수정할 수 없습니다 — 발주내역_관리시트에서 입고 처리를 해주세요.';
+
 function renderTxForm() {
   var card = document.getElementById('txFormCard');
   var html = '<p class="section-title">' + currentTx + ' 입력</p><div class="row" id="txFieldsRow">';
-  html += '<div class="field"><label>일자</label><input type="date" id="f_일자" value="' + new Date().toISOString().slice(0,10) + '"></div>';
+  if (currentTx !== '기말재고실측') {
+    html += '<div class="field"><label>적용일자</label><input type="date" id="f_적용일자" value="' + new Date().toISOString().slice(0,10) + '"></div>';
+  }
   html += '<div class="field"><label>상품코드</label><input id="f_상품코드" placeholder="SKU 코드"></div>';
 
   if (currentTx === '입고') {
@@ -453,12 +474,15 @@ function renderTxForm() {
       { v: '구매입고', t: '구매입고 (자동전용)' }, { v: '무상입고', t: '무상입고' }, { v: '반품입고', t: '반품입고' },
       { v: '창고이동입고', t: '창고이동입고' }, { v: '사간거래입고', t: '사간거래입고' },
     ]);
+    html += '<div id="inboundFieldsWrap" class="row">';
     html += selHtml('f_법인코드', '법인(도착)', entityOptions());
     html += selHtml('f_창고코드', '창고(도착)', warehouseOptions());
     html += selHtml('f_출발창고코드', '출발 창고 (창고이동입고 시)', [{ v: '', t: '-' }].concat(warehouseOptions()));
     html += selHtml('f_출발법인코드', '출발 법인 (사간거래입고 시)', [{ v: '', t: '-' }].concat(entityOptions()));
     html += '<div class="field"><label>수량</label><input type="number" id="f_수량"></div>';
     html += '<div class="field"><label>메모</label><input id="f_메모"></div>';
+    html += '</div>';
+    html += '<div id="inboundPurchaseNotice" class="notice warn" style="display:none;flex-basis:100%">' + PURCHASE_INBOUND_NOTICE + '</div>';
   } else if (currentTx === '출고') {
     html += selHtml('f_세부구분', '세부구분', [{ v: '판매출고', t: '판매출고' }, { v: '기타출고', t: '기타출고' }]);
     html += selHtml('f_법인코드', '법인', entityOptions());
@@ -504,6 +528,20 @@ function renderTxForm() {
   html += '</div><div class="row" style="margin-top:12px"><button class="btn primary" id="txSubmit">저장</button></div>';
   card.innerHTML = html;
   document.getElementById('txSubmit').onclick = submitTx;
+
+  if (currentTx === '입고') {
+    var kindSel = document.getElementById('f_성격');
+    var toggle = function () {
+      var isPurchase = kindSel.value === '구매입고';
+      document.getElementById('inboundFieldsWrap').style.display = isPurchase ? 'none' : 'flex';
+      document.getElementById('inboundPurchaseNotice').style.display = isPurchase ? '' : 'none';
+      document.getElementById('txSubmit').style.display = isPurchase ? 'none' : '';
+      var dateField = document.getElementById('f_적용일자');
+      if (dateField) dateField.closest('.field').style.display = isPurchase ? 'none' : '';
+    };
+    kindSel.addEventListener('change', toggle);
+    toggle();
+  }
 }
 
 var TX_ACTION = {
@@ -538,10 +576,11 @@ function renderTxList(rows) {
   var thead = document.querySelector('#txListTable thead');
   var tbody = document.querySelector('#txListTable tbody');
   if (!rows.length) { thead.innerHTML = ''; tbody.innerHTML = '<tr><td>내역이 없습니다.</td></tr>'; return; }
-  var cols = Object.keys(rows[0]).filter(function (c) { return c !== '__row' && c !== 'updatedAt' && c !== 'updatedBy'; });
-  thead.innerHTML = '<tr>' + cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '<th>삭제</th></tr>';
-  tbody.innerHTML = rows.map(function (r) {
-    return '<tr>' + cols.map(function (c) { return '<td>' + (r[c] === undefined ? '' : r[c]) + '</td>'; }).join('') +
+  // id는 UUID라 그냥 보면 아무 정보가 없어 보여서 화면에는 안 보여주고, 삭제 버튼에만 내부적으로 쓴다.
+  var cols = Object.keys(rows[0]).filter(function (c) { return c !== '__row' && c !== 'id' && c !== 'updatedAt' && c !== 'updatedBy' && c !== '배치ID'; });
+  thead.innerHTML = '<tr><th>#</th>' + cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '<th>삭제</th></tr>';
+  tbody.innerHTML = rows.map(function (r, i) {
+    return '<tr><td class="hint">' + (i + 1) + '</td>' + cols.map(function (c) { return '<td>' + (r[c] === undefined ? '' : r[c]) + '</td>'; }).join('') +
       '<td><button class="btn small danger" data-id="' + r.id + '">삭제</button></td></tr>';
   }).join('');
   tbody.querySelectorAll('button[data-id]').forEach(function (btn) {
@@ -550,6 +589,339 @@ function renderTxList(rows) {
       apiPost('tx.delete', { txType: currentTx, id: btn.dataset.id }).then(loadTxList).catch(function (err) { alert(err.message); });
     };
   });
+}
+
+/* ================= 엑셀 일괄 업로드 =================
+ * SheetJS(xlsx)로 브라우저에서 직접 .xlsx를 읽고 쓴다. 서버는 파싱이 끝난 JSON 행
+ * 배열만 받는다. 템플릿 헤더는 사람이 읽기 쉬운 이름(법인명/창고명)을 쓰고, 업로드
+ * 시점에 법인마스터/창고마스터와 대조해서 코드로 변환한다.
+ */
+var BULK_SPECS = {
+  '입고': [
+    { key: '적용일자', friendly: '적용일자(YYYY-MM-DD)', type: 'date', required: true },
+    { key: '법인코드', friendly: '법인명', type: 'entity', required: true },
+    { key: '창고코드', friendly: '창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '세부구분', friendly: '세부구분(무상입고/반품입고)', type: 'enum', options: ['무상입고', '반품입고'], required: true },
+    { key: '수량', friendly: '수량', type: 'qty', required: true },
+    { key: '메모', friendly: '메모', type: 'text', required: false },
+  ],
+  '출고': [
+    { key: '적용일자', friendly: '적용일자(YYYY-MM-DD)', type: 'date', required: true },
+    { key: '법인코드', friendly: '법인명', type: 'entity', required: true },
+    { key: '창고코드', friendly: '창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '세부구분', friendly: '세부구분(판매출고/기타출고)', type: 'enum', options: ['판매출고', '기타출고'], required: true },
+    { key: '수량', friendly: '수량', type: 'qty', required: true },
+    { key: '출처', friendly: '출처(실측/잔차추정)', type: 'enum', options: ['실측', '잔차추정'], required: false, default: '실측' },
+    { key: '메모', friendly: '메모', type: 'text', required: false },
+  ],
+  '폐기': [
+    { key: '적용일자', friendly: '적용일자(YYYY-MM-DD)', type: 'date', required: true },
+    { key: '법인코드', friendly: '법인명', type: 'entity', required: true },
+    { key: '창고코드', friendly: '창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '수량', friendly: '수량', type: 'qty', required: true },
+    { key: '사유', friendly: '사유', type: 'text', required: false },
+  ],
+  '기부': [
+    { key: '적용일자', friendly: '적용일자(YYYY-MM-DD)', type: 'date', required: true },
+    { key: '법인코드', friendly: '법인명', type: 'entity', required: true },
+    { key: '창고코드', friendly: '창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '수량', friendly: '수량', type: 'qty', required: true },
+    { key: '수혜처', friendly: '수혜처', type: 'text', required: false },
+  ],
+  '사간거래': [
+    { key: '적용일자', friendly: '적용일자(YYYY-MM-DD)', type: 'date', required: true },
+    { key: 'from법인코드', friendly: '출발법인명', type: 'entity', required: true },
+    { key: 'to법인코드', friendly: '도착법인명', type: 'entity', required: true },
+    { key: '창고코드', friendly: '창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '수량', friendly: '수량', type: 'qty', required: true },
+    { key: '메모', friendly: '메모', type: 'text', required: false },
+  ],
+  '창고이동': [
+    { key: '적용일자', friendly: '적용일자(YYYY-MM-DD)', type: 'date', required: true },
+    { key: '법인코드', friendly: '법인명(소유, 불변)', type: 'entity', required: true },
+    { key: 'from창고코드', friendly: '출발창고명', type: 'warehouse', required: true },
+    { key: 'to창고코드', friendly: '도착창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '수량', friendly: '수량', type: 'qty', required: true },
+    { key: '메모', friendly: '메모', type: 'text', required: false },
+  ],
+  '재고조정': [
+    { key: '적용일자', friendly: '적용일자(YYYY-MM-DD)', type: 'date', required: true },
+    { key: '법인코드', friendly: '법인명', type: 'entity', required: true },
+    { key: '창고코드', friendly: '창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '구분', friendly: '구분(재고실사/재고전환/전산재고조정)', type: 'enum', options: ['재고실사', '재고전환', '전산재고조정'], required: true },
+    { key: '증감수량', friendly: '증감수량(±)', type: 'signedQty', required: true },
+    { key: '사유', friendly: '사유(필수)', type: 'text', required: true },
+  ],
+  '기말재고실측': [
+    { key: '법인코드', friendly: '법인명', type: 'entity', required: true },
+    { key: '창고코드', friendly: '창고명', type: 'warehouse', required: true },
+    { key: '상품코드', friendly: '상품코드', type: 'sku', required: true },
+    { key: '연월', friendly: '연월(YYYY-MM)', type: 'ym', required: true },
+    { key: '실측수량', friendly: '실측수량', type: 'qty', required: true },
+    { key: '출처', friendly: '출처', type: 'text', required: false },
+  ],
+};
+
+function findEntityCodeByName(name) {
+  var n = String(name || '').trim();
+  var e = MASTERS.entities.find(function (x) { return x['법인명'] === n || x['법인코드'] === n; });
+  return e ? e['법인코드'] : null;
+}
+function findWarehouseCodeByName(name) {
+  var n = String(name || '').trim();
+  var w = MASTERS.warehouses.find(function (x) { return x['창고명'] === n || x['창고코드'] === n; });
+  return w ? w['창고코드'] : null;
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+function normDate(v) {
+  if (v instanceof Date) return v.getFullYear() + '-' + pad2(v.getMonth() + 1) + '-' + pad2(v.getDate());
+  var s = String(v == null ? '' : v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return d.getFullYear() + '-' + pad2(d.getMonth() + 1) + '-' + pad2(d.getDate());
+  throw new Error('날짜 형식을 알 수 없습니다: "' + s + '" (예: 2025-01-15)');
+}
+function normYm(v) {
+  if (v instanceof Date) return v.getFullYear() + '-' + pad2(v.getMonth() + 1);
+  var s = String(v == null ? '' : v).trim();
+  if (/^\d{4}-\d{2}$/.test(s)) return s;
+  var d = new Date(s);
+  if (!isNaN(d.getTime())) return d.getFullYear() + '-' + pad2(d.getMonth() + 1);
+  throw new Error('연월 형식을 알 수 없습니다: "' + s + '" (예: 2025-01)');
+}
+function rowHasExampleMarker(row) {
+  return Object.keys(row).some(function (k) { return String(row[k]).indexOf('예시') !== -1; });
+}
+function exampleValueFor(spec) {
+  switch (spec.type) {
+    case 'date': return '2025-01-15';
+    case 'ym': return '2025-01';
+    case 'entity': return (MASTERS.entities[0] || {})['법인명'] || '아이리스브라이트';
+    case 'warehouse': return (MASTERS.warehouses[0] || {})['창고명'] || '창고명';
+    case 'sku': return 'EXAMPLE_SKU';
+    case 'enum': return spec.options[0];
+    case 'qty': return 100;
+    case 'signedQty': return -5;
+    case 'text': return '예시 행 — 삭제 후 사용';
+    default: return '';
+  }
+}
+
+function mapBulkRow(txType, row) {
+  var spec = BULK_SPECS[txType];
+  var out = {};
+  for (var i = 0; i < spec.length; i++) {
+    var f = spec[i];
+    var raw = row[f.friendly];
+    var hasVal = raw !== undefined && raw !== null && String(raw).trim() !== '';
+    if (!hasVal) {
+      if (f.required) throw new Error('"' + f.friendly + '" 값이 비어있습니다.');
+      out[f.key] = f.default !== undefined ? f.default : '';
+      continue;
+    }
+    if (f.type === 'date') out[f.key] = normDate(raw);
+    else if (f.type === 'ym') out[f.key] = normYm(raw);
+    else if (f.type === 'entity') {
+      var ec = findEntityCodeByName(raw);
+      if (!ec) throw new Error('"' + f.friendly + '" 값 "' + raw + '"을(를) 법인마스터에서 찾을 수 없습니다.');
+      out[f.key] = ec;
+    } else if (f.type === 'warehouse') {
+      var wc = findWarehouseCodeByName(raw);
+      if (!wc) throw new Error('"' + f.friendly + '" 값 "' + raw + '"을(를) 창고마스터에서 찾을 수 없습니다.');
+      out[f.key] = wc;
+    } else if (f.type === 'sku') out[f.key] = String(raw).trim();
+    else if (f.type === 'enum') {
+      var val = String(raw).trim();
+      if (f.options.indexOf(val) === -1) throw new Error('"' + f.friendly + '" 값은 ' + f.options.join('/') + ' 중 하나여야 합니다 (입력값: ' + raw + ')');
+      out[f.key] = val;
+    } else if (f.type === 'qty') {
+      var q = Number(raw);
+      if (!q || q <= 0) throw new Error('"' + f.friendly + '" 값은 0보다 큰 숫자여야 합니다 (입력값: ' + raw + ')');
+      out[f.key] = q;
+    } else if (f.type === 'signedQty') {
+      var sq = Number(raw);
+      if (!sq) throw new Error('"' + f.friendly + '" 값은 0이 아닌 숫자여야 합니다 (입력값: ' + raw + ')');
+      out[f.key] = sq;
+    } else out[f.key] = raw;
+  }
+  if (txType === '사간거래' && out['from법인코드'] === out['to법인코드']) throw new Error('출발 법인과 도착 법인이 같습니다.');
+  if (txType === '창고이동' && out['from창고코드'] === out['to창고코드']) throw new Error('출발 창고와 도착 창고가 같습니다.');
+  return out;
+}
+
+function downloadTemplate(txType) {
+  var spec = BULK_SPECS[txType];
+  var headers = spec.map(function (s) { return s.friendly; });
+  var example = spec.map(function (s) { return exampleValueFor(s); });
+  var ws = XLSX.utils.aoa_to_sheet([headers, example]);
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, txType);
+  XLSX.writeFile(wb, txType + '_업로드양식.xlsx');
+}
+
+var pendingBulkPayloads = [];
+var pendingBulkFileName = '';
+
+function renderBulkUploadSection() {
+  var card = document.getElementById('txBulkCard');
+  if (!BULK_SPECS[currentTx]) { card.innerHTML = ''; return; }
+  card.innerHTML =
+    '<p class="section-title">엑셀 일괄 업로드</p>' +
+    '<div class="row">' +
+    '<button class="btn" id="bulkTemplateBtn">📄 양식 다운로드</button>' +
+    '<input type="file" id="bulkFileInput" accept=".xlsx,.xls">' +
+    '</div>' +
+    '<p class="hint" style="margin-top:6px">양식의 2번째 행은 형식을 보여주는 예시입니다. 그대로 두고 업로드해도 자동으로 제외됩니다.</p>' +
+    '<div id="bulkPreviewWrap" style="margin-top:12px"></div>';
+  document.getElementById('bulkTemplateBtn').onclick = function () { downloadTemplate(currentTx); };
+  document.getElementById('bulkFileInput').onchange = handleBulkFile;
+  pendingBulkPayloads = [];
+}
+
+function handleBulkFile(e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  pendingBulkFileName = file.name;
+  var reader = new FileReader();
+  reader.onload = function (ev) {
+    try {
+      var data = new Uint8Array(ev.target.result);
+      var wb = XLSX.read(data, { type: 'array', cellDates: true });
+      var ws = wb.Sheets[wb.SheetNames[0]];
+      var rawRows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+      renderBulkPreview(rawRows);
+    } catch (err) {
+      alert('파일을 읽는 중 오류가 발생했습니다: ' + err.message);
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+function renderBulkPreview(rawRows) {
+  var wrap = document.getElementById('bulkPreviewWrap');
+  var results = [];
+  pendingBulkPayloads = [];
+  rawRows.forEach(function (row, i) {
+    if (rowHasExampleMarker(row)) { results.push({ i: i + 2, skip: true }); return; }
+    try {
+      var payload = mapBulkRow(currentTx, row);
+      pendingBulkPayloads.push(payload);
+      results.push({ i: i + 2, ok: true });
+    } catch (err) {
+      results.push({ i: i + 2, ok: false, error: err.message });
+    }
+  });
+
+  var okCount = results.filter(function (r) { return r.ok; }).length;
+  var errCount = results.filter(function (r) { return r.ok === false; }).length;
+  var skipCount = results.filter(function (r) { return r.skip; }).length;
+
+  var html = '<div class="notice ' + (errCount ? 'warn' : 'ok') + '">엑셀 ' + rawRows.length + '행 중 정상 ' + okCount + '행, 오류 ' + errCount + '행' +
+    (skipCount ? ', 예시행 제외 ' + skipCount + '행' : '') + '</div>';
+  html += '<div class="table-wrap"><table><thead><tr><th>행</th><th>상태</th></tr></thead><tbody>' +
+    results.map(function (r) {
+      if (r.skip) return '<tr><td>' + r.i + '</td><td class="hint">예시 행 (제외됨)</td></tr>';
+      return '<tr><td>' + r.i + '</td><td>' + (r.ok ? '<span style="color:var(--accent)">정상</span>' : '<span style="color:var(--bad)">오류: ' + r.error + '</span>') + '</td></tr>';
+    }).join('') + '</tbody></table></div>';
+  html += '<div class="row" style="margin-top:10px"><button class="btn primary" id="bulkConfirmBtn"' + (okCount ? '' : ' disabled') + '>업로드 확정 (' + okCount + '행)</button></div>';
+  wrap.innerHTML = html;
+  if (okCount) document.getElementById('bulkConfirmBtn').onclick = submitBulkUpload;
+}
+
+function submitBulkUpload() {
+  if (!pendingBulkPayloads.length) return;
+  apiPost('upload.bulk', { txType: currentTx, fileName: pendingBulkFileName, rows: pendingBulkPayloads }).then(function (data) {
+    alert('업로드 완료: ' + data.inserted + '행 반영' + (data.failed ? ', ' + data.failed + '행은 서버에서 거부됨' : ''));
+    document.getElementById('bulkPreviewWrap').innerHTML = '';
+    document.getElementById('bulkFileInput').value = '';
+    pendingBulkPayloads = [];
+    loadTxList();
+  }).catch(function (err) { alert('업로드 실패: ' + err.message); });
+}
+
+/* ================= 업로드 관리 ================= */
+document.getElementById('uploadsRefresh').onclick = loadUploads;
+
+function loadUploads() {
+  apiGet('uploads').then(renderUploadsTable).catch(function (err) {
+    document.querySelector('#uploadsTable tbody').innerHTML = '<tr><td>' + err.message + '</td></tr>';
+  });
+}
+
+function renderUploadsTable(rows) {
+  var thead = document.querySelector('#uploadsTable thead');
+  var tbody = document.querySelector('#uploadsTable tbody');
+  thead.innerHTML = '<tr><th>거래유형</th><th>파일명</th><th class="num">행수</th><th>업로드일시</th><th>업로드자</th><th>상태</th><th>관리</th></tr>';
+  if (!rows.length) { tbody.innerHTML = '<tr><td colspan="7">업로드 이력이 없습니다.</td></tr>'; return; }
+  tbody.innerHTML = rows.map(function (r) {
+    var canDelete = isAdmin() && r['상태'] !== '삭제됨';
+    var action = canDelete ? '<button class="btn small danger" data-batch="' + r['배치ID'] + '">삭제</button>' : (r['상태'] === '삭제됨' ? '-' : '관리자만 삭제 가능');
+    return '<tr><td>' + r['거래유형'] + '</td><td>' + r['파일명'] + '</td><td class="num">' + fmtNum(r['행수']) + '</td><td>' + r['업로드일시'] + '</td><td>' + r['업로드자'] + '</td><td>' + r['상태'] + '</td><td>' + action + '</td></tr>';
+  }).join('');
+  tbody.querySelectorAll('button[data-batch]').forEach(function (btn) {
+    btn.onclick = function () {
+      if (!confirm('이 업로드로 들어온 거래 행을 전부 삭제합니다. 되돌릴 수 없습니다. 계속할까요?')) return;
+      apiPost('upload.delete', { 배치ID: btn.dataset.batch }).then(function (data) {
+        alert(data.deletedRows + '행 삭제했습니다.');
+        loadUploads();
+        loadTxList();
+      }).catch(function (err) { alert(err.message); });
+    };
+  });
+}
+
+/* ================= 대시보드 엑셀 다운로드 (월별 전체) ================= */
+document.getElementById('dashExport').onclick = function () {
+  var entity = document.getElementById('dashEntity').value;
+  var warehouse = document.getElementById('dashWarehouse').value;
+  var ym = document.getElementById('dashYm').value || currentYm();
+  apiGet('ledger', { entity: entity, warehouse: warehouse, toYm: ym }).then(function (data) {
+    exportLedgerXlsx(data, ym);
+  }).catch(function (err) { alert(err.message); });
+};
+
+function exportLedgerXlsx(data, endYm) {
+  if (!data.months.length) { alert('내려받을 데이터가 없습니다.'); return; }
+  var MONTH_COLS = ['기초수량', '입고', '출고', '폐기', '기부', '사간거래', '창고이동', '재고조정', '단가', '기말수량', '기말금액'];
+  var head1 = ['구분', '상품코드', '법인', '창고', '상품명'];
+  var head2 = ['', '', '', '', ''];
+  data.months.forEach(function (ym) {
+    head1.push(ym);
+    for (var i = 1; i < MONTH_COLS.length; i++) head1.push('');
+    MONTH_COLS.forEach(function (c) { head2.push(c); });
+  });
+  var aoa = [head1, head2];
+  data.rows.forEach(function (r) {
+    var row = [r.구분, r.상품코드, r.법인명, r.창고명, r.상품명];
+    data.months.forEach(function (ym) {
+      var m = r.monthly[ym];
+      if (!m) { MONTH_COLS.forEach(function () { row.push(''); }); return; }
+      var 입고 = m.매입수량 + m.무상매입 + m.반품입고;
+      var 출고 = m.판매출고 + m.기타출고;
+      var 사간 = m.사간거래IN - m.사간거래OUT;
+      var 이동 = m.창고이동IN - m.창고이동OUT;
+      row.push(m.기초수량, 입고, 출고, m.폐기, m.기부, 사간, 이동, m.재고조정, m.단가, m.기말수량, m.기말금액);
+    });
+    aoa.push(row);
+  });
+  var ws = XLSX.utils.aoa_to_sheet(aoa);
+  var merges = [];
+  var col = 5;
+  data.months.forEach(function () {
+    merges.push({ s: { r: 0, c: col }, e: { r: 0, c: col + MONTH_COLS.length - 1 } });
+    col += MONTH_COLS.length;
+  });
+  ws['!merges'] = merges;
+  var wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '수불부');
+  XLSX.writeFile(wb, '재고수불부_' + endYm + '.xlsx');
 }
 
 /* ================= 재고금액 검증 ================= */
@@ -591,31 +963,53 @@ document.getElementById('apiUrlSave').onclick = function () {
 function renderMasterTables() {
   var eBody = document.querySelector('#entityTable tbody');
   var eThead = document.getElementById('entityTable').querySelector('thead');
-  if (eThead) eThead.innerHTML = '<tr><th>법인코드</th><th>법인명</th><th>국내외</th><th>통화</th><th>사용</th><th>비활성화</th></tr>';
+  if (eThead) eThead.innerHTML = '<tr><th>법인코드</th><th>법인명</th><th>국내외</th><th>통화</th><th>사용</th><th>관리</th></tr>';
   eBody.innerHTML = MASTERS.entities.map(function (e) {
     return '<tr><td>' + e['법인코드'] + '</td><td>' + e['법인명'] + '</td><td>' + e['국내외구분'] + '</td><td>' + e['통화코드'] + '</td><td>' + e['사용여부'] + '</td>' +
-      '<td><button class="btn small danger" data-code="' + e['법인코드'] + '">비활성화</button></td></tr>';
+      '<td><button class="btn small" data-deact="' + e['법인코드'] + '">비활성화</button> ' +
+      '<button class="btn small danger" data-hard="' + e['법인코드'] + '">완전삭제</button></td></tr>';
   }).join('');
-  eBody.querySelectorAll('button[data-code]').forEach(function (b) {
-    b.onclick = function () { apiPost('entity.deactivate', { 법인코드: b.dataset.code }).then(loadMasters).catch(function (err) { alert(err.message); }); };
+  eBody.querySelectorAll('button[data-deact]').forEach(function (b) {
+    b.onclick = function () { apiPost('entity.deactivate', { 법인코드: b.dataset.deact }).then(loadMasters).catch(function (err) { alert(err.message); }); };
+  });
+  eBody.querySelectorAll('button[data-hard]').forEach(function (b) {
+    b.onclick = function () {
+      if (!confirm('법인 "' + b.dataset.hard + '"을(를) 완전히 삭제합니다. 되돌릴 수 없습니다. 계속할까요?')) return;
+      apiPost('entity.deleteHard', { 법인코드: b.dataset.hard }).then(loadMasters).catch(function (err) { alert(err.message); });
+    };
   });
 
   var wThead = document.getElementById('warehouseTable').querySelector('thead');
-  if (wThead) wThead.innerHTML = '<tr><th>창고코드</th><th>창고명</th><th>국내외</th><th>사용</th><th>비활성화</th></tr>';
+  if (wThead) wThead.innerHTML = '<tr><th>창고코드</th><th>창고명</th><th>국내외</th><th>사용</th><th>관리</th></tr>';
   var wBody = document.querySelector('#warehouseTable tbody');
   wBody.innerHTML = MASTERS.warehouses.map(function (w) {
     return '<tr><td>' + w['창고코드'] + '</td><td>' + w['창고명'] + '</td><td>' + w['국내외구분'] + '</td><td>' + w['사용여부'] + '</td>' +
-      '<td><button class="btn small danger" data-code="' + w['창고코드'] + '">비활성화</button></td></tr>';
+      '<td><button class="btn small" data-deact="' + w['창고코드'] + '">비활성화</button> ' +
+      '<button class="btn small danger" data-hard="' + w['창고코드'] + '">완전삭제</button></td></tr>';
   }).join('');
-  wBody.querySelectorAll('button[data-code]').forEach(function (b) {
-    b.onclick = function () { apiPost('warehouse.deactivate', { 창고코드: b.dataset.code }).then(loadMasters).catch(function (err) { alert(err.message); }); };
+  wBody.querySelectorAll('button[data-deact]').forEach(function (b) {
+    b.onclick = function () { apiPost('warehouse.deactivate', { 창고코드: b.dataset.deact }).then(loadMasters).catch(function (err) { alert(err.message); }); };
+  });
+  wBody.querySelectorAll('button[data-hard]').forEach(function (b) {
+    b.onclick = function () {
+      if (!confirm('창고 "' + b.dataset.hard + '"을(를) 완전히 삭제합니다. 되돌릴 수 없습니다. 계속할까요?')) return;
+      apiPost('warehouse.deleteHard', { 창고코드: b.dataset.hard }).then(loadMasters).catch(function (err) { alert(err.message); });
+    };
   });
 
   var fThead = document.getElementById('fxTable').querySelector('thead');
-  if (fThead) fThead.innerHTML = '<tr><th>통화</th><th>KRW환율</th><th>기준일자</th></tr>';
-  document.querySelector('#fxTable tbody').innerHTML = MASTERS.fx.map(function (f) {
-    return '<tr><td>' + f['통화코드'] + '</td><td class="num">' + fmtNum(f['KRW환율']) + '</td><td>' + f['기준일자'] + '</td></tr>';
+  if (fThead) fThead.innerHTML = '<tr><th>통화</th><th>KRW환율</th><th>기준일자</th><th>관리</th></tr>';
+  var fBody = document.querySelector('#fxTable tbody');
+  fBody.innerHTML = MASTERS.fx.map(function (f) {
+    return '<tr><td>' + f['통화코드'] + '</td><td class="num">' + fmtNum(f['KRW환율']) + '</td><td>' + f['기준일자'] + '</td>' +
+      '<td><button class="btn small danger" data-fx="' + f['통화코드'] + '">삭제</button></td></tr>';
   }).join('');
+  fBody.querySelectorAll('button[data-fx]').forEach(function (b) {
+    b.onclick = function () {
+      if (!confirm('통화 "' + b.dataset.fx + '" 환율을 삭제합니다. 계속할까요?')) return;
+      apiPost('fx.delete', { 통화코드: b.dataset.fx }).then(loadMasters).catch(function (err) { alert(err.message); });
+    };
+  });
 }
 
 document.getElementById('entSave').onclick = function () {
@@ -639,6 +1033,7 @@ document.getElementById('dashYm').value = currentYm();
 document.getElementById('checkYm').value = currentYm();
 refreshAdminUi();
 renderTxForm();
+renderBulkUploadSection();
 if (apiUrl()) {
   loadMasters().then(function () {
     loadWarnings();

@@ -1,9 +1,15 @@
 /**
  * 법인마스터 / 창고마스터 / 환율마스터 CRUD.
  *
- * 법인·창고는 완전 삭제가 아니라 "사용여부=N" 비활성화가 기본이다 — 과거 거래나 SKU가
- * 그 법인/창고를 참조하고 있으면 지난 달 수불부가 깨지기 때문. 완전 삭제는 참조가
- * 하나도 없을 때만 허용한다.
+ * 법인·창고는 기본은 "사용여부=N" 비활성화를 권장하지만, 완전 삭제(하드 삭제)도
+ * 지원한다 — 과거 거래나 SKU가 그 법인/창고를 참조하고 있으면 완전 삭제는 막고
+ * 비활성화만 허용한다(지난 달 수불부가 깨지는 것을 막기 위해). 참조가 하나도 없으면
+ * 완전 삭제할 수 있다.
+ *
+ * 모든 코드 비교는 String()으로 감싼다 — 시트 셀 서식이 아직 "일반 텍스트"로
+ * 고정되기 전에 들어간 값이 숫자 타입으로 남아있어도(예: "0001" -> 1) 비교가
+ * 깨지지 않도록 하기 위한 방어 코드다. 새로 쓰는 값은 SheetUtil.gs의
+ * forceTextFormatForRow_ 가 텍스트로 고정한다.
  */
 
 function listEntities_() {
@@ -26,7 +32,7 @@ function fxRateToKrw_(currencyCode) {
   if (currencyCode === 'KRW') return 1;
   var rows = listFx_();
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['통화코드'] === currencyCode) return Number(rows[i]['KRW환율']) || null;
+    if (String(rows[i]['통화코드']) === String(currencyCode)) return Number(rows[i]['KRW환율']) || null;
   }
   return null;
 }
@@ -34,7 +40,7 @@ function fxRateToKrw_(currencyCode) {
 function entityByCode_(code) {
   var rows = listEntities_();
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['법인코드'] === code) return rows[i];
+    if (String(rows[i]['법인코드']) === String(code)) return rows[i];
   }
   return null;
 }
@@ -42,9 +48,21 @@ function entityByCode_(code) {
 function warehouseByCode_(code) {
   var rows = listWarehouses_();
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['창고코드'] === code) return rows[i];
+    if (String(rows[i]['창고코드']) === String(code)) return rows[i];
   }
   return null;
+}
+
+/** found 행에 obj 값을 반영할 때 코드성 열은 텍스트 서식으로 고정하고 쓴다. */
+function writeRowValues_(sh, rowNum, headers, obj) {
+  var idxMap = headerIndexMap_(sh);
+  headers.forEach(function (h) {
+    if (idxMap[h] === undefined) return;
+    if (FORCE_TEXT_HEADERS.indexOf(h) !== -1) {
+      sh.getRange(rowNum, idxMap[h] + 1).setNumberFormat('@');
+    }
+    sh.getRange(rowNum, idxMap[h] + 1).setValue(obj[h]);
+  });
 }
 
 /** 법인/창고 마스터는 id 컬럼이 없다 — 법인코드/창고코드 자체가 자연키이므로 직접 찾아 갱신한다. */
@@ -52,10 +70,11 @@ function upsertEntity_(payload, user) {
   var sh = getTab_(TABS.ENTITY);
   var rows = readAllRows_(sh);
   var code = String(payload['법인코드'] || '').trim();
+  if (!code) throw new Error('법인코드는 필수입니다.');
   var currency = payload['국내외구분'] === ENUM.OVERSEAS ? String(payload['통화코드'] || '').trim() : 'KRW';
   var found = null;
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['법인코드'] === code) { found = rows[i]; break; }
+    if (String(rows[i]['법인코드']) === code) { found = rows[i]; break; }
   }
   var obj = {
     '법인코드': code,
@@ -68,11 +87,7 @@ function upsertEntity_(payload, user) {
     'updatedBy': user || 'admin',
   };
   if (found) {
-    var rowNum = found.__row;
-    var idxMap = headerIndexMap_(sh);
-    HEADERS[TABS.ENTITY].forEach(function (h) {
-      if (idxMap[h] !== undefined) sh.getRange(rowNum, idxMap[h] + 1).setValue(obj[h]);
-    });
+    writeRowValues_(sh, found.__row, HEADERS[TABS.ENTITY], obj);
   } else {
     appendRowByHeaders_(sh, HEADERS[TABS.ENTITY], obj);
   }
@@ -84,7 +99,7 @@ function deactivateEntity_(code) {
   var rows = readAllRows_(sh);
   var idxMap = headerIndexMap_(sh);
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['법인코드'] === code) {
+    if (String(rows[i]['법인코드']) === String(code)) {
       sh.getRange(rows[i].__row, idxMap['사용여부'] + 1).setValue('N');
       sh.getRange(rows[i].__row, idxMap['updatedAt'] + 1).setValue(nowIso_());
       return true;
@@ -100,35 +115,37 @@ function deleteEntityHard_(code) {
   var sh = getTab_(TABS.ENTITY);
   var rows = readAllRows_(sh);
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['법인코드'] === code) { sh.deleteRow(rows[i].__row); return true; }
+    if (String(rows[i]['법인코드']) === String(code)) { sh.deleteRow(rows[i].__row); return true; }
   }
   return false;
 }
 
 function isEntityReferenced_(code) {
+  var c = String(code);
   var txTabs = [TABS.IN_MANUAL, TABS.OUT, TABS.DISPOSAL, TABS.DONATION, TABS.ADJUST];
   for (var i = 0; i < txTabs.length; i++) {
     var rows = readAllRows_(txTabs[i]);
-    if (rows.some(function (r) { return r['법인코드'] === code; })) return true;
+    if (rows.some(function (r) { return String(r['법인코드']) === c; })) return true;
   }
   var interco = readAllRows_(TABS.INTERCO);
-  if (interco.some(function (r) { return r['from법인코드'] === code || r['to법인코드'] === code; })) return true;
+  if (interco.some(function (r) { return String(r['from법인코드']) === c || String(r['to법인코드']) === c; })) return true;
   var transfer = readAllRows_(TABS.TRANSFER);
-  if (transfer.some(function (r) { return r['법인코드'] === code; })) return true;
+  if (transfer.some(function (r) { return String(r['법인코드']) === c; })) return true;
   var seed = readAllRows_(TABS.SEED_STOCK);
-  if (seed.some(function (r) { return r['법인코드'] === code; })) return true;
+  if (seed.some(function (r) { return String(r['법인코드']) === c; })) return true;
+  var ending = readAllRows_(TABS.ENDING_ACTUAL);
+  if (ending.some(function (r) { return String(r['법인코드']) === c; })) return true;
   return false;
 }
 
 function upsertWarehouse_(payload, user) {
   var sh = getTab_(TABS.WAREHOUSE);
   var rows = readAllRows_(sh);
-  var idxMap = headerIndexMap_(sh);
   var code = String(payload['창고코드'] || '').trim();
   if (!code) throw new Error('창고코드는 필수입니다.');
   var found = null;
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['창고코드'] === code) { found = rows[i]; break; }
+    if (String(rows[i]['창고코드']) === code) { found = rows[i]; break; }
   }
   var obj = {
     '창고코드': code,
@@ -140,9 +157,7 @@ function upsertWarehouse_(payload, user) {
     'updatedBy': user || 'admin',
   };
   if (found) {
-    HEADERS[TABS.WAREHOUSE].forEach(function (h) {
-      if (idxMap[h] !== undefined) sh.getRange(found.__row, idxMap[h] + 1).setValue(obj[h]);
-    });
+    writeRowValues_(sh, found.__row, HEADERS[TABS.WAREHOUSE], obj);
   } else {
     appendRowByHeaders_(sh, HEADERS[TABS.WAREHOUSE], obj);
   }
@@ -154,12 +169,36 @@ function deactivateWarehouse_(code) {
   var rows = readAllRows_(sh);
   var idxMap = headerIndexMap_(sh);
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['창고코드'] === code) {
+    if (String(rows[i]['창고코드']) === String(code)) {
       sh.getRange(rows[i].__row, idxMap['사용여부'] + 1).setValue('N');
       sh.getRange(rows[i].__row, idxMap['updatedAt'] + 1).setValue(nowIso_());
       return true;
     }
   }
+  return false;
+}
+
+function deleteWarehouseHard_(code) {
+  if (isWarehouseReferenced_(code)) {
+    throw new Error('이 창고를 참조하는 거래가 있어 완전 삭제할 수 없습니다. 대신 비활성화(사용여부=N)를 사용하세요.');
+  }
+  var sh = getTab_(TABS.WAREHOUSE);
+  var rows = readAllRows_(sh);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i]['창고코드']) === String(code)) { sh.deleteRow(rows[i].__row); return true; }
+  }
+  return false;
+}
+
+function isWarehouseReferenced_(code) {
+  var c = String(code);
+  var straightTabs = [TABS.IN_MANUAL, TABS.OUT, TABS.DISPOSAL, TABS.DONATION, TABS.ADJUST, TABS.INTERCO, TABS.SEED_STOCK, TABS.ENDING_ACTUAL];
+  for (var i = 0; i < straightTabs.length; i++) {
+    var rows = readAllRows_(straightTabs[i]);
+    if (rows.some(function (r) { return String(r['창고코드']) === c; })) return true;
+  }
+  var transfer = readAllRows_(TABS.TRANSFER);
+  if (transfer.some(function (r) { return String(r['from창고코드']) === c || String(r['to창고코드']) === c; })) return true;
   return false;
 }
 
@@ -172,7 +211,7 @@ function ensureWarehouseExists_(name) {
   if (!name) return null;
   var rows = listWarehouses_();
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['창고명'] === name) return rows[i];
+    if (String(rows[i]['창고명']) === String(name)) return rows[i];
   }
   var sh = getTab_(TABS.WAREHOUSE);
   var obj = {
@@ -191,12 +230,11 @@ function ensureWarehouseExists_(name) {
 function upsertFx_(payload, user) {
   var sh = getTab_(TABS.FX);
   var rows = readAllRows_(sh);
-  var idxMap = headerIndexMap_(sh);
   var code = String(payload['통화코드'] || '').trim();
   if (!code) throw new Error('통화코드는 필수입니다.');
   var found = null;
   for (var i = 0; i < rows.length; i++) {
-    if (rows[i]['통화코드'] === code) { found = rows[i]; break; }
+    if (String(rows[i]['통화코드']) === code) { found = rows[i]; break; }
   }
   var obj = {
     '통화코드': code,
@@ -205,11 +243,18 @@ function upsertFx_(payload, user) {
     'updatedAt': nowIso_(),
   };
   if (found) {
-    HEADERS[TABS.FX].forEach(function (h) {
-      if (idxMap[h] !== undefined) sh.getRange(found.__row, idxMap[h] + 1).setValue(obj[h]);
-    });
+    writeRowValues_(sh, found.__row, HEADERS[TABS.FX], obj);
   } else {
     appendRowByHeaders_(sh, HEADERS[TABS.FX], obj);
   }
   return obj;
+}
+
+function deleteFx_(code) {
+  var sh = getTab_(TABS.FX);
+  var rows = readAllRows_(sh);
+  for (var i = 0; i < rows.length; i++) {
+    if (String(rows[i]['통화코드']) === String(code)) { sh.deleteRow(rows[i].__row); return true; }
+  }
+  throw new Error('해당 통화를 찾을 수 없습니다.');
 }

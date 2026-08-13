@@ -47,6 +47,19 @@ function readAllRows_(sheetOrName) {
   return out;
 }
 
+/**
+ * FORCE_TEXT_HEADERS 에 있는 열은 값을 쓰기 전에 셀 서식을 "일반 텍스트"로 고정한다.
+ * 서식을 먼저 지정하지 않으면 "0001"처럼 숫자로만 보이는 문자열을 Sheets가 자동으로
+ * 숫자 1로 바꿔버려서 앞자리 0이 사라진다 — 이 경우 코드 비교(===)가 깨진다.
+ */
+function forceTextFormatForRow_(sheet, rowNum, headers) {
+  headers.forEach(function (h, i) {
+    if (FORCE_TEXT_HEADERS.indexOf(h) !== -1) {
+      sheet.getRange(rowNum, i + 1).setNumberFormat('@');
+    }
+  });
+}
+
 /** 표준 헤더 배열(HEADERS[tab])의 열 순서대로 obj 값을 뽑아 한 행을 append. */
 function appendRowByHeaders_(sheetOrName, headers, obj) {
   var sheet = typeof sheetOrName === 'string' ? getTab_(sheetOrName) : sheetOrName;
@@ -54,7 +67,9 @@ function appendRowByHeaders_(sheetOrName, headers, obj) {
     var v = obj[h];
     return v === undefined || v === null ? '' : v;
   });
-  sheet.appendRow(row);
+  var rowNum = sheet.getLastRow() + 1;
+  forceTextFormatForRow_(sheet, rowNum, headers);
+  sheet.getRange(rowNum, 1, 1, headers.length).setValues([row]);
 }
 
 /** id 컬럼 값으로 행을 찾아 obj의 값들로 갱신. 없으면 false 리턴(호출부에서 append 처리). */
@@ -72,6 +87,7 @@ function updateRowById_(sheetOrName, headers, id, obj) {
         var v = obj[h];
         return v === undefined || v === null ? '' : v;
       });
+      forceTextFormatForRow_(sheet, rowNum, headers);
       sheet.getRange(rowNum, 1, 1, headers.length).setValues([newRow]);
       return true;
     }
@@ -141,5 +157,14 @@ function ensureTabWithHeaders_(ss, tabName, headers) {
     sh.getRange(1, existing.length + 1, 1, missing.length).setValues([missing]);
   }
   sh.setFrozenRows(1);
+
+  // 코드성 열은 전체 컬럼을 "일반 텍스트" 서식으로 고정해서, 앞으로 이 스크립트를 통해서든
+  // 사람이 시트에 직접 입력해서든 "0001" 같은 값이 숫자로 바뀌지 않도록 한다.
+  headers.forEach(function (h, i) {
+    if (FORCE_TEXT_HEADERS.indexOf(h) !== -1) {
+      sh.getRange(2, i + 1, Math.max(sh.getMaxRows() - 1, 1), 1).setNumberFormat('@');
+    }
+  });
+
   return sh;
 }
