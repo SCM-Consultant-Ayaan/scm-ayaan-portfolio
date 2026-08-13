@@ -1,0 +1,653 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>다법인·다창고 재고수불부</title>
+<style>
+  :root {
+    --bg: #f3f1ea;
+    --surface: #ffffff;
+    --ink: #232019;
+    --ink-soft: #6b6355;
+    --line: #ddd8cb;
+    --accent: #0e6b5c;
+    --accent-soft: #dcefe9;
+    --warn: #a8660c;
+    --warn-soft: #f6e6c9;
+    --bad: #a13a3a;
+    --bad-soft: #f5dcda;
+    --radius: 8px;
+    font-family: -apple-system, BlinkMacSystemFont, "Apple SD Gothic Neo", "Malgun Gothic", "Pretendard", sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font-size: 14px; }
+  header.app { display: flex; align-items: center; gap: 16px; padding: 14px 20px; background: var(--surface); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 10; flex-wrap: wrap; }
+  header.app h1 { font-size: 16px; margin: 0; font-weight: 700; white-space: nowrap; }
+  nav.tabs { display: flex; gap: 4px; flex: 1; flex-wrap: wrap; }
+  nav.tabs button { border: none; background: transparent; padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 13.5px; color: var(--ink-soft); font-weight: 600; }
+  nav.tabs button.active { background: var(--accent-soft); color: var(--accent); }
+  #adminBox { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+  #adminBox .badge { padding: 3px 9px; border-radius: 100px; font-size: 11.5px; font-weight: 700; }
+  #adminBox .badge.on { background: var(--accent-soft); color: var(--accent); }
+  #adminBox .badge.off { background: var(--line); color: var(--ink-soft); }
+  main { max-width: 1180px; margin: 0 auto; padding: 20px; }
+  .panel { display: none; }
+  .panel.active { display: block; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 16px; margin-bottom: 16px; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+  .field { display: flex; flex-direction: column; gap: 4px; }
+  .field label { font-size: 12px; color: var(--ink-soft); font-weight: 600; }
+  select, input, textarea, button.btn {
+    font-family: inherit; font-size: 13.5px; padding: 7px 10px; border-radius: 6px;
+    border: 1px solid var(--line); background: var(--surface); color: var(--ink);
+  }
+  button.btn { cursor: pointer; font-weight: 700; }
+  button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+  button.btn.small { padding: 4px 8px; font-size: 12px; }
+  .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; min-width: 600px; }
+  th, td { padding: 7px 10px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+  th { background: #faf8f2; font-size: 11.5px; color: var(--ink-soft); position: sticky; top: 0; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .section-title { font-size: 15px; font-weight: 700; margin: 0 0 12px; }
+  .sub-tabs { display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap; }
+  .sub-tabs button { border: 1px solid var(--line); background: var(--surface); padding: 6px 12px; border-radius: 100px; cursor: pointer; font-size: 12.5px; font-weight: 600; color: var(--ink-soft); }
+  .sub-tabs button.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .notice { padding: 10px 14px; border-radius: 6px; font-size: 13px; margin-bottom: 12px; }
+  .notice.warn { background: var(--warn-soft); color: var(--warn); }
+  .notice.bad { background: var(--bad-soft); color: var(--bad); }
+  .notice.ok { background: var(--accent-soft); color: var(--accent); }
+  .pill { display: inline-block; padding: 1px 7px; border-radius: 100px; font-size: 11px; font-weight: 700; }
+  .pill.in { background: var(--accent-soft); color: var(--accent); }
+  .pill.out { background: var(--bad-soft); color: var(--bad); }
+  .hint { color: var(--ink-soft); font-size: 12px; }
+  .modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.4); display: none; align-items: center; justify-content: center; z-index: 100; }
+  .modal-backdrop.show { display: flex; }
+  .modal { background: var(--surface); border-radius: var(--radius); padding: 20px; width: 320px; }
+  .modal h3 { margin: 0 0 12px; font-size: 15px; }
+  .modal .row { flex-direction: column; align-items: stretch; }
+  footer.status { text-align: center; color: var(--ink-soft); font-size: 11.5px; padding: 20px; }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <h1>📒 재고수불부</h1>
+  <nav class="tabs" id="mainTabs">
+    <button data-panel="dashboard" class="active">수불부 대시보드</button>
+    <button data-panel="skudetail">SKU 상세</button>
+    <button data-panel="input">거래 입력</button>
+    <button data-panel="valuecheck">재고금액 검증</button>
+    <button data-panel="settings">설정</button>
+  </nav>
+  <div id="adminBox">
+    <span class="badge off" id="adminBadge">조회 전용</span>
+    <button class="btn small" id="loginBtn">관리자 로그인</button>
+    <button class="btn small" id="logoutBtn" style="display:none">로그아웃</button>
+  </div>
+</header>
+
+<main>
+  <div id="globalWarnings"></div>
+
+  <!-- ================= 대시보드 ================= -->
+  <section class="panel active" id="panel-dashboard">
+    <div class="card">
+      <div class="row">
+        <div class="field"><label>연월</label><input type="month" id="dashYm"></div>
+        <div class="field"><label>법인</label><select id="dashEntity"><option value="ALL">전체 합산</option></select></div>
+        <div class="field"><label>창고</label><select id="dashWarehouse"><option value="ALL">전체 합산</option></select></div>
+        <div class="field"><button class="btn primary" id="dashLoad">조회</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <p class="section-title">법인 × 창고 × 월별 수불부</p>
+      <p class="hint">기초재고 + 입고 − 출고 − 폐기 − 기부 ± 사간거래 ± 창고이동 + 재고조정 = 기말재고</p>
+      <div class="table-wrap"><table id="dashTable"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- ================= SKU 상세 ================= -->
+  <section class="panel" id="panel-skudetail">
+    <div class="card">
+      <div class="row">
+        <div class="field"><label>상품코드</label><input id="skuCodeInput" placeholder="예: ZRP000000"></div>
+        <div class="field"><label>법인</label><select id="skuEntity"><option value="ALL">전체</option></select></div>
+        <div class="field"><label>창고</label><select id="skuWarehouse"><option value="ALL">전체</option></select></div>
+        <div class="field"><button class="btn primary" id="skuLoad">조회</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <p class="section-title" id="skuTitle">SKU 월별 흐름</p>
+      <div class="table-wrap"><table id="skuTable"><thead></thead><tbody></tbody></table></div>
+    </div>
+  </section>
+
+  <!-- ================= 거래 입력 ================= -->
+  <section class="panel" id="panel-input">
+    <div class="card" id="inputGate">
+      <p>거래 입력은 관리자 로그인 후 가능합니다. 우측 상단에서 로그인해주세요.</p>
+    </div>
+    <div id="inputForms" style="display:none">
+      <div class="sub-tabs" id="txTabs">
+        <button data-tx="입고" class="active">입고</button>
+        <button data-tx="출고">출고</button>
+        <button data-tx="폐기">폐기</button>
+        <button data-tx="기부">기부</button>
+        <button data-tx="사간거래">사간거래</button>
+        <button data-tx="창고이동">창고이동</button>
+        <button data-tx="재고조정">재고조정</button>
+        <button data-tx="기말재고실측">기말재고 실측</button>
+      </div>
+      <div class="card" id="txFormCard"></div>
+      <div class="card">
+        <p class="section-title">최근 입력 내역</p>
+        <div class="row" style="margin-bottom:10px">
+          <button class="btn small" id="txRefresh">새로고침</button>
+        </div>
+        <div class="table-wrap"><table id="txListTable"><thead></thead><tbody></tbody></table></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 재고금액 검증 ================= -->
+  <section class="panel" id="panel-valuecheck">
+    <div class="card">
+      <div class="row">
+        <div class="field"><label>연월</label><input type="month" id="checkYm"></div>
+        <div class="field"><button class="btn primary" id="checkLoad">검증</button></div>
+      </div>
+    </div>
+    <div class="card">
+      <p class="section-title">통화별 합계</p>
+      <div class="table-wrap"><table id="checkCcyTable"><thead><tr><th>통화</th><th class="num">금액</th></tr></thead><tbody></tbody></table></div>
+      <p id="checkKrwTotal" style="margin-top:10px;font-weight:700"></p>
+    </div>
+    <div class="card">
+      <p class="section-title">창고별 소계</p>
+      <div class="table-wrap"><table id="checkWhTable"><thead><tr><th>창고</th><th>통화</th><th class="num">금액</th></tr></thead><tbody></tbody></table></div>
+    </div>
+    <div class="card" id="checkFxWarnCard" style="display:none">
+      <p class="section-title">환율 경고</p>
+      <div id="checkFxWarnList"></div>
+    </div>
+  </section>
+
+  <!-- ================= 설정 ================= -->
+  <section class="panel" id="panel-settings">
+    <div class="card">
+      <p class="section-title">API 연결 주소</p>
+      <div class="row">
+        <div class="field" style="flex:1"><label>Apps Script 웹앱 URL</label><input id="apiUrlInput" style="width:100%" placeholder="https://script.google.com/macros/s/.../exec"></div>
+        <div class="field"><button class="btn primary" id="apiUrlSave">저장</button></div>
+      </div>
+      <p class="hint">배포한 Apps Script 웹앱의 실행 URL을 여기에 붙여넣으면 이 브라우저에 저장됩니다.</p>
+    </div>
+
+    <div class="card">
+      <p class="section-title">법인마스터</p>
+      <div class="table-wrap"><table id="entityTable"><thead></thead><tbody></tbody></table></div>
+      <div class="row" style="margin-top:10px" id="entityForm">
+        <div class="field"><label>법인코드</label><input id="entCode" style="width:90px"></div>
+        <div class="field"><label>법인명</label><input id="entName"></div>
+        <div class="field"><label>국내외구분</label><select id="entDomestic"><option value="국내">국내</option><option value="해외">해외</option></select></div>
+        <div class="field"><label>통화코드</label><input id="entCurrency" style="width:70px" placeholder="해외만"></div>
+        <div class="field"><button class="btn primary" id="entSave">저장/추가</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="section-title">창고마스터</p>
+      <div class="table-wrap"><table id="warehouseTable"><thead></thead><tbody></tbody></table></div>
+      <div class="row" style="margin-top:10px" id="warehouseForm">
+        <div class="field"><label>창고코드</label><input id="whCode"></div>
+        <div class="field"><label>창고명</label><input id="whName"></div>
+        <div class="field"><label>국내외구분</label><select id="whDomestic"><option value="국내">국내</option><option value="해외">해외</option></select></div>
+        <div class="field"><button class="btn primary" id="whSave">저장/추가</button></div>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="section-title">환율마스터 (KRW 기준)</p>
+      <div class="table-wrap"><table id="fxTable"><thead></thead><tbody></tbody></table></div>
+      <div class="row" style="margin-top:10px" id="fxForm">
+        <div class="field"><label>통화코드</label><input id="fxCode" style="width:70px"></div>
+        <div class="field"><label>1단위당 KRW</label><input id="fxRate" type="number" step="0.01"></div>
+        <div class="field"><button class="btn primary" id="fxSave">저장</button></div>
+      </div>
+    </div>
+  </section>
+</main>
+
+<div class="modal-backdrop" id="loginModal">
+  <div class="modal">
+    <h3>관리자 로그인</h3>
+    <div class="row">
+      <div class="field"><label>비밀번호</label><input id="loginPw" type="password"></div>
+      <div id="loginErr" class="hint" style="color:var(--bad)"></div>
+      <div class="row">
+        <button class="btn primary" id="loginSubmit" style="flex:1">로그인</button>
+        <button class="btn" id="loginCancel">취소</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<footer class="status" id="statusFooter"></footer>
+
+<script>
+/* ============================================================
+ * 다법인·다창고 재고수불부 — 프론트엔드 (정적 HTML/JS)
+ * Apps Script 웹앱을 백엔드로 쓴다. CORS 프리플라이트를 피하려고
+ * POST는 text/plain 으로 JSON 문자열을 그대로 보낸다.
+ * ============================================================ */
+
+var LS_API_URL = 'inv_ledger_api_url';
+var LS_TOKEN = 'inv_ledger_admin_token';
+
+function apiUrl() { return localStorage.getItem(LS_API_URL) || ''; }
+function adminToken() { return localStorage.getItem(LS_TOKEN) || ''; }
+function isAdmin() { return !!adminToken(); }
+
+function apiGet(action, params) {
+  var url = apiUrl();
+  if (!url) return Promise.reject(new Error('설정 탭에서 Apps Script 웹앱 URL을 먼저 입력해주세요.'));
+  var qs = Object.assign({ action: action }, params || {});
+  var full = url + '?' + Object.keys(qs).filter(function(k){return qs[k]!==undefined && qs[k]!==null && qs[k]!=='';})
+    .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(qs[k]); }).join('&');
+  return fetch(full).then(function (res) { return res.json(); }).then(function (json) {
+    if (!json.ok) throw new Error(json.error || '알 수 없는 오류');
+    return json.data;
+  });
+}
+
+function apiPost(action, payload) {
+  var url = apiUrl();
+  if (!url) return Promise.reject(new Error('설정 탭에서 Apps Script 웹앱 URL을 먼저 입력해주세요.'));
+  var body = JSON.stringify({ action: action, payload: payload || {}, token: adminToken() });
+  return fetch(url, { method: 'POST', headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: body })
+    .then(function (res) { return res.json(); }).then(function (json) {
+      if (!json.ok) throw new Error(json.error || '알 수 없는 오류');
+      return json.data;
+    });
+}
+
+function fmtNum(n) { return (Number(n) || 0).toLocaleString('ko-KR', { maximumFractionDigits: 2 }); }
+function currentYm() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0'); }
+
+/* ---------------- 탭 네비게이션 ---------------- */
+document.getElementById('mainTabs').addEventListener('click', function (e) {
+  var btn = e.target.closest('button[data-panel]');
+  if (!btn) return;
+  document.querySelectorAll('#mainTabs button').forEach(function (b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  document.querySelectorAll('.panel').forEach(function (p) { p.classList.remove('active'); });
+  document.getElementById('panel-' + btn.dataset.panel).classList.add('active');
+});
+
+/* ---------------- 로그인 ---------------- */
+function refreshAdminUi() {
+  var on = isAdmin();
+  document.getElementById('adminBadge').textContent = on ? '관리자 모드' : '조회 전용';
+  document.getElementById('adminBadge').className = 'badge ' + (on ? 'on' : 'off');
+  document.getElementById('loginBtn').style.display = on ? 'none' : '';
+  document.getElementById('logoutBtn').style.display = on ? '' : 'none';
+  document.getElementById('inputGate').style.display = on ? 'none' : '';
+  document.getElementById('inputForms').style.display = on ? '' : 'none';
+}
+document.getElementById('loginBtn').onclick = function () { document.getElementById('loginModal').classList.add('show'); };
+document.getElementById('loginCancel').onclick = function () { document.getElementById('loginModal').classList.remove('show'); };
+document.getElementById('logoutBtn').onclick = function () { localStorage.removeItem(LS_TOKEN); refreshAdminUi(); };
+document.getElementById('loginSubmit').onclick = function () {
+  var pw = document.getElementById('loginPw').value;
+  apiPost('login', { password: pw }).then(function (data) {
+    localStorage.setItem(LS_TOKEN, data.token);
+    document.getElementById('loginModal').classList.remove('show');
+    document.getElementById('loginErr').textContent = '';
+    document.getElementById('loginPw').value = '';
+    refreshAdminUi();
+  }).catch(function (err) { document.getElementById('loginErr').textContent = err.message; });
+};
+
+/* ---------------- 공통: 마스터 로드 & 셀렉트 채우기 ---------------- */
+var MASTERS = { entities: [], warehouses: [], fx: [] };
+
+function fillEntitySelect(sel, includeAll) {
+  var opts = includeAll ? ['<option value="ALL">전체' + (includeAll === true ? ' 합산' : '') + '</option>'] : [];
+  MASTERS.entities.filter(function (e) { return e['사용여부'] !== 'N'; }).forEach(function (e) {
+    opts.push('<option value="' + e['법인코드'] + '">' + e['법인명'] + '</option>');
+  });
+  sel.innerHTML = opts.join('');
+}
+function fillWarehouseSelect(sel, includeAll) {
+  var opts = includeAll ? ['<option value="ALL">전체' + (includeAll === true ? ' 합산' : '') + '</option>'] : [];
+  MASTERS.warehouses.filter(function (w) { return w['사용여부'] !== 'N'; }).forEach(function (w) {
+    opts.push('<option value="' + w['창고코드'] + '">' + w['창고명'] + '</option>');
+  });
+  sel.innerHTML = opts.join('');
+}
+
+function loadMasters() {
+  return apiGet('masters').then(function (data) {
+    MASTERS = data;
+    ['dashEntity', 'skuEntity'].forEach(function (id) { fillEntitySelect(document.getElementById(id), true); });
+    ['dashWarehouse', 'skuWarehouse'].forEach(function (id) { fillWarehouseSelect(document.getElementById(id), true); });
+    renderMasterTables();
+  });
+}
+
+function loadWarnings() {
+  apiGet('warnings').then(function (data) {
+    var box = document.getElementById('globalWarnings');
+    var msgs = [];
+    if (data.po.법인미매핑건수 > 0) msgs.push('발주 입고 중 소유법인이 매핑되지 않은 건 ' + data.po.법인미매핑건수 + '건 — SKU 매핑 시트를 확인해주세요.');
+    if (data.po.외화입고건수 > 0) msgs.push('KRW가 아닌 통화로 입고된 건 ' + data.po.외화입고건수 + '건 — 이동평균단가 계산에서 제외됐습니다.');
+    if (data.skuUnmapped.length > 0) msgs.push('SKU 매핑 시트의 소유법인 값이 법인마스터와 일치하지 않는 SKU ' + data.skuUnmapped.length + '건.');
+    box.innerHTML = msgs.length ? msgs.map(function (m) { return '<div class="notice warn">' + m + '</div>'; }).join('') : '';
+  }).catch(function () { /* 초기 미설정 상태면 조용히 무시 */ });
+}
+
+/* ================= 대시보드 ================= */
+document.getElementById('dashLoad').onclick = loadDashboard;
+function loadDashboard() {
+  var ym = document.getElementById('dashYm').value || currentYm();
+  var entity = document.getElementById('dashEntity').value;
+  var warehouse = document.getElementById('dashWarehouse').value;
+  apiGet('ledger', { entity: entity, warehouse: warehouse, toYm: ym }).then(function (data) {
+    renderDashboard(data, ym);
+  }).catch(function (err) { alert(err.message); });
+}
+
+function renderDashboard(data, ym) {
+  var thead = document.querySelector('#dashTable thead');
+  var tbody = document.querySelector('#dashTable tbody');
+  var cols = ['구분', '상품코드', '법인', '창고', '상품명', '기초수량', '입고', '출고', '폐기', '기부', '사간거래', '창고이동', '재고조정', '단가', '기말수량', '기말금액', '통화'];
+  thead.innerHTML = '<tr>' + cols.map(function (c) { return '<th' + (typeof c === 'string' && /수량|금액|단가/.test(c) ? ' class="num"' : '') + '>' + c + '</th>'; }).join('') + '</tr>';
+  var rows = data.rows.map(function (r) {
+    var m = r.monthly[ym];
+    if (!m) return null;
+    var 입고 = m.매입수량 + m.무상매입 + m.반품입고;
+    var 출고 = m.판매출고 + m.기타출고;
+    var 사간 = m.사간거래IN - m.사간거래OUT;
+    var 이동 = m.창고이동IN - m.창고이동OUT;
+    return '<tr>' +
+      '<td>' + r.구분 + '</td><td>' + r.상품코드 + '</td><td>' + r.법인명 + '</td><td>' + r.창고명 + '</td><td>' + r.상품명 + '</td>' +
+      '<td class="num">' + fmtNum(m.기초수량) + '</td>' +
+      '<td class="num">' + fmtNum(입고) + '</td><td class="num">' + fmtNum(출고) + '</td>' +
+      '<td class="num">' + fmtNum(m.폐기) + '</td><td class="num">' + fmtNum(m.기부) + '</td>' +
+      '<td class="num">' + fmtNum(사간) + '</td><td class="num">' + fmtNum(이동) + '</td>' +
+      '<td class="num">' + fmtNum(m.재고조정) + '</td>' +
+      '<td class="num">' + fmtNum(m.단가) + '</td><td class="num">' + fmtNum(m.기말수량) + '</td>' +
+      '<td class="num">' + fmtNum(m.기말금액) + '</td><td>' + m.통화코드 + '</td>' +
+      '</tr>';
+  }).filter(Boolean);
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="17">데이터가 없습니다.</td></tr>';
+}
+
+/* ================= SKU 상세 ================= */
+document.getElementById('skuLoad').onclick = function () {
+  var code = document.getElementById('skuCodeInput').value.trim();
+  if (!code) return alert('상품코드를 입력해주세요.');
+  var entity = document.getElementById('skuEntity').value;
+  var warehouse = document.getElementById('skuWarehouse').value;
+  apiGet('ledger', { entity: entity, warehouse: warehouse, sku: code }).then(function (data) {
+    renderSkuDetail(data, code);
+  }).catch(function (err) { alert(err.message); });
+};
+
+function renderSkuDetail(data, code) {
+  document.getElementById('skuTitle').textContent = 'SKU ' + code + ' 월별 흐름';
+  var thead = document.querySelector('#skuTable thead');
+  var tbody = document.querySelector('#skuTable tbody');
+  var cols = ['연월', '법인', '창고', '기초수량', '입고', '출고', '폐기', '기부', '사간거래', '창고이동', '재고조정', '단가', '기말수량', '기말금액', '통화'];
+  thead.innerHTML = '<tr>' + cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '</tr>';
+  var rows = [];
+  data.rows.forEach(function (r) {
+    data.months.forEach(function (ym) {
+      var m = r.monthly[ym];
+      if (!m) return;
+      var 입고 = m.매입수량 + m.무상매입 + m.반품입고;
+      var 출고 = m.판매출고 + m.기타출고;
+      var 사간 = m.사간거래IN - m.사간거래OUT;
+      var 이동 = m.창고이동IN - m.창고이동OUT;
+      rows.push('<tr><td>' + ym + '</td><td>' + r.법인명 + '</td><td>' + r.창고명 + '</td>' +
+        '<td class="num">' + fmtNum(m.기초수량) + '</td><td class="num">' + fmtNum(입고) + '</td><td class="num">' + fmtNum(출고) + '</td>' +
+        '<td class="num">' + fmtNum(m.폐기) + '</td><td class="num">' + fmtNum(m.기부) + '</td>' +
+        '<td class="num">' + fmtNum(사간) + '</td><td class="num">' + fmtNum(이동) + '</td><td class="num">' + fmtNum(m.재고조정) + '</td>' +
+        '<td class="num">' + fmtNum(m.단가) + '</td><td class="num">' + fmtNum(m.기말수량) + '</td><td class="num">' + fmtNum(m.기말금액) + '</td><td>' + m.통화코드 + '</td></tr>');
+    });
+  });
+  tbody.innerHTML = rows.join('') || '<tr><td colspan="15">데이터가 없습니다.</td></tr>';
+}
+
+/* ================= 거래 입력 ================= */
+var currentTx = '입고';
+document.getElementById('txTabs').addEventListener('click', function (e) {
+  var btn = e.target.closest('button[data-tx]');
+  if (!btn) return;
+  document.querySelectorAll('#txTabs button').forEach(function (b) { b.classList.remove('active'); });
+  btn.classList.add('active');
+  currentTx = btn.dataset.tx;
+  renderTxForm();
+  loadTxList();
+});
+document.getElementById('txRefresh').onclick = loadTxList;
+
+function selHtml(id, label, options) {
+  return '<div class="field"><label>' + label + '</label><select id="' + id + '">' +
+    options.map(function (o) { return '<option value="' + o.v + '">' + o.t + '</option>'; }).join('') + '</select></div>';
+}
+function entityOptions() { return MASTERS.entities.filter(function (e) { return e['사용여부'] !== 'N'; }).map(function (e) { return { v: e['법인코드'], t: e['법인명'] }; }); }
+function warehouseOptions() { return MASTERS.warehouses.filter(function (w) { return w['사용여부'] !== 'N'; }).map(function (w) { return { v: w['창고코드'], t: w['창고명'] }; }); }
+
+function renderTxForm() {
+  var card = document.getElementById('txFormCard');
+  var html = '<p class="section-title">' + currentTx + ' 입력</p><div class="row" id="txFieldsRow">';
+  html += '<div class="field"><label>일자</label><input type="date" id="f_일자" value="' + new Date().toISOString().slice(0,10) + '"></div>';
+  html += '<div class="field"><label>상품코드</label><input id="f_상품코드" placeholder="SKU 코드"></div>';
+
+  if (currentTx === '입고') {
+    html += selHtml('f_성격', '성격', [
+      { v: '구매입고', t: '구매입고 (자동전용)' }, { v: '무상입고', t: '무상입고' }, { v: '반품입고', t: '반품입고' },
+      { v: '창고이동입고', t: '창고이동입고' }, { v: '사간거래입고', t: '사간거래입고' },
+    ]);
+    html += selHtml('f_법인코드', '법인(도착)', entityOptions());
+    html += selHtml('f_창고코드', '창고(도착)', warehouseOptions());
+    html += selHtml('f_출발창고코드', '출발 창고 (창고이동입고 시)', [{ v: '', t: '-' }].concat(warehouseOptions()));
+    html += selHtml('f_출발법인코드', '출발 법인 (사간거래입고 시)', [{ v: '', t: '-' }].concat(entityOptions()));
+    html += '<div class="field"><label>수량</label><input type="number" id="f_수량"></div>';
+    html += '<div class="field"><label>메모</label><input id="f_메모"></div>';
+  } else if (currentTx === '출고') {
+    html += selHtml('f_세부구분', '세부구분', [{ v: '판매출고', t: '판매출고' }, { v: '기타출고', t: '기타출고' }]);
+    html += selHtml('f_법인코드', '법인', entityOptions());
+    html += selHtml('f_창고코드', '창고', warehouseOptions());
+    html += '<div class="field"><label>수량</label><input type="number" id="f_수량"></div>';
+    html += selHtml('f_출처', '출처', [{ v: '실측', t: '실측' }, { v: '잔차추정', t: '잔차추정(기말재고 실측 기반)' }]);
+    html += '<div class="field"><label>메모</label><input id="f_메모"></div>';
+  } else if (currentTx === '폐기') {
+    html += selHtml('f_법인코드', '법인', entityOptions());
+    html += selHtml('f_창고코드', '창고', warehouseOptions());
+    html += '<div class="field"><label>수량</label><input type="number" id="f_수량"></div>';
+    html += '<div class="field"><label>사유</label><input id="f_사유"></div>';
+  } else if (currentTx === '기부') {
+    html += selHtml('f_법인코드', '법인', entityOptions());
+    html += selHtml('f_창고코드', '창고', warehouseOptions());
+    html += '<div class="field"><label>수량</label><input type="number" id="f_수량"></div>';
+    html += '<div class="field"><label>수혜처</label><input id="f_수혜처"></div>';
+  } else if (currentTx === '사간거래') {
+    html += selHtml('f_from법인코드', '출발 법인', entityOptions());
+    html += selHtml('f_to법인코드', '도착 법인', entityOptions());
+    html += selHtml('f_창고코드', '창고', warehouseOptions());
+    html += '<div class="field"><label>수량</label><input type="number" id="f_수량"></div>';
+    html += '<div class="field"><label>메모</label><input id="f_메모"></div>';
+  } else if (currentTx === '창고이동') {
+    html += selHtml('f_법인코드', '법인(소유, 불변)', entityOptions());
+    html += selHtml('f_from창고코드', '출발 창고', warehouseOptions());
+    html += selHtml('f_to창고코드', '도착 창고', warehouseOptions());
+    html += '<div class="field"><label>수량</label><input type="number" id="f_수량"></div>';
+    html += '<div class="field"><label>메모</label><input id="f_메모"></div>';
+  } else if (currentTx === '재고조정') {
+    html += selHtml('f_법인코드', '법인', entityOptions());
+    html += selHtml('f_창고코드', '창고', warehouseOptions());
+    html += selHtml('f_구분', '구분', [{ v: '재고실사', t: '재고실사' }, { v: '재고전환', t: '재고전환' }, { v: '전산재고조정', t: '전산재고조정' }]);
+    html += '<div class="field"><label>증감수량 (±)</label><input type="number" id="f_증감수량"></div>';
+    html += '<div class="field"><label>사유 (필수)</label><input id="f_사유"></div>';
+  } else if (currentTx === '기말재고실측') {
+    html += selHtml('f_법인코드', '법인', entityOptions());
+    html += selHtml('f_창고코드', '창고', warehouseOptions());
+    html += '<div class="field"><label>연월</label><input type="month" id="f_연월"></div>';
+    html += '<div class="field"><label>실측수량</label><input type="number" id="f_실측수량"></div>';
+    html += '<div class="field"><label>출처</label><input id="f_출처"></div>';
+  }
+  html += '</div><div class="row" style="margin-top:12px"><button class="btn primary" id="txSubmit">저장</button></div>';
+  card.innerHTML = html;
+  document.getElementById('txSubmit').onclick = submitTx;
+}
+
+var TX_ACTION = {
+  '입고': 'tx.inbound.create', '출고': 'tx.out.upsert', '폐기': 'tx.disposal.upsert', '기부': 'tx.donation.upsert',
+  '사간거래': 'tx.interco.upsert', '창고이동': 'tx.transfer.upsert', '재고조정': 'tx.adjust.upsert', '기말재고실측': 'tx.endingActual.upsert',
+};
+
+function collectFieldValues() {
+  var payload = {};
+  document.querySelectorAll('#txFieldsRow [id^="f_"]').forEach(function (el) {
+    payload[el.id.slice(2)] = el.value;
+  });
+  return payload;
+}
+
+function submitTx() {
+  var payload = collectFieldValues();
+  apiPost(TX_ACTION[currentTx], payload).then(function () {
+    alert('저장했습니다.');
+    loadTxList();
+  }).catch(function (err) { alert('오류: ' + err.message); });
+}
+
+function loadTxList() {
+  var typeMap = { '입고': '입고', '출고': '출고', '폐기': '폐기', '기부': '기부', '사간거래': '사간거래', '창고이동': '창고이동', '재고조정': '재고조정', '기말재고실측': '기말재고실측' };
+  apiGet('tx', { type: typeMap[currentTx] }).then(function (rows) {
+    renderTxList(rows);
+  }).catch(function () { document.querySelector('#txListTable tbody').innerHTML = ''; });
+}
+
+function renderTxList(rows) {
+  var thead = document.querySelector('#txListTable thead');
+  var tbody = document.querySelector('#txListTable tbody');
+  if (!rows.length) { thead.innerHTML = ''; tbody.innerHTML = '<tr><td>내역이 없습니다.</td></tr>'; return; }
+  var cols = Object.keys(rows[0]).filter(function (c) { return c !== '__row' && c !== 'updatedAt' && c !== 'updatedBy'; });
+  thead.innerHTML = '<tr>' + cols.map(function (c) { return '<th>' + c + '</th>'; }).join('') + '<th>삭제</th></tr>';
+  tbody.innerHTML = rows.map(function (r) {
+    return '<tr>' + cols.map(function (c) { return '<td>' + (r[c] === undefined ? '' : r[c]) + '</td>'; }).join('') +
+      '<td><button class="btn small danger" data-id="' + r.id + '">삭제</button></td></tr>';
+  }).join('');
+  tbody.querySelectorAll('button[data-id]').forEach(function (btn) {
+    btn.onclick = function () {
+      if (!confirm('삭제하시겠습니까?')) return;
+      apiPost('tx.delete', { txType: currentTx, id: btn.dataset.id }).then(loadTxList).catch(function (err) { alert(err.message); });
+    };
+  });
+}
+
+/* ================= 재고금액 검증 ================= */
+document.getElementById('checkLoad').onclick = function () {
+  var ym = document.getElementById('checkYm').value || currentYm();
+  apiGet('stockcheck', { ym: ym }).then(renderStockCheck).catch(function (err) { alert(err.message); });
+};
+
+function renderStockCheck(data) {
+  var ccyBody = document.querySelector('#checkCcyTable tbody');
+  ccyBody.innerHTML = data.통화별합계.map(function (c) { return '<tr><td>' + c.통화코드 + '</td><td class="num">' + fmtNum(c.금액) + '</td></tr>'; }).join('');
+  document.getElementById('checkKrwTotal').textContent = data.전체KRW환산 !== null
+    ? '전체 (KRW 환산): ' + fmtNum(data.전체KRW환산) + ' 원'
+    : '전체 (KRW 환산): 환율마스터에 값이 없어 계산할 수 없습니다.';
+  var whBody = document.querySelector('#checkWhTable tbody');
+  whBody.innerHTML = data.창고별.map(function (w) {
+    var name = (MASTERS.warehouses.find(function (x) { return x['창고코드'] === w.창고코드; }) || {})['창고명'] || w.창고코드;
+    return '<tr><td>' + name + '</td><td>' + w.통화코드 + '</td><td class="num">' + fmtNum(w.금액) + '</td></tr>';
+  }).join('');
+  var warnCard = document.getElementById('checkFxWarnCard');
+  if (data.fx경고 && data.fx경고.length) {
+    warnCard.style.display = '';
+    document.getElementById('checkFxWarnList').innerHTML = data.fx경고.map(function (w) {
+      return '<div class="notice bad">' + w.연월 + ' · ' + w.그룹 + ' — ' + w.사유 + '</div>';
+    }).join('');
+  } else {
+    warnCard.style.display = 'none';
+  }
+}
+
+/* ================= 설정 ================= */
+document.getElementById('apiUrlInput').value = apiUrl();
+document.getElementById('apiUrlSave').onclick = function () {
+  localStorage.setItem(LS_API_URL, document.getElementById('apiUrlInput').value.trim());
+  loadMasters().then(loadWarnings);
+  alert('저장했습니다.');
+};
+
+function renderMasterTables() {
+  var eBody = document.querySelector('#entityTable tbody');
+  var eThead = document.getElementById('entityTable').querySelector('thead');
+  if (eThead) eThead.innerHTML = '<tr><th>법인코드</th><th>법인명</th><th>국내외</th><th>통화</th><th>사용</th><th>비활성화</th></tr>';
+  eBody.innerHTML = MASTERS.entities.map(function (e) {
+    return '<tr><td>' + e['법인코드'] + '</td><td>' + e['법인명'] + '</td><td>' + e['국내외구분'] + '</td><td>' + e['통화코드'] + '</td><td>' + e['사용여부'] + '</td>' +
+      '<td><button class="btn small danger" data-code="' + e['법인코드'] + '">비활성화</button></td></tr>';
+  }).join('');
+  eBody.querySelectorAll('button[data-code]').forEach(function (b) {
+    b.onclick = function () { apiPost('entity.deactivate', { 법인코드: b.dataset.code }).then(loadMasters).catch(function (err) { alert(err.message); }); };
+  });
+
+  var wThead = document.getElementById('warehouseTable').querySelector('thead');
+  if (wThead) wThead.innerHTML = '<tr><th>창고코드</th><th>창고명</th><th>국내외</th><th>사용</th><th>비활성화</th></tr>';
+  var wBody = document.querySelector('#warehouseTable tbody');
+  wBody.innerHTML = MASTERS.warehouses.map(function (w) {
+    return '<tr><td>' + w['창고코드'] + '</td><td>' + w['창고명'] + '</td><td>' + w['국내외구분'] + '</td><td>' + w['사용여부'] + '</td>' +
+      '<td><button class="btn small danger" data-code="' + w['창고코드'] + '">비활성화</button></td></tr>';
+  }).join('');
+  wBody.querySelectorAll('button[data-code]').forEach(function (b) {
+    b.onclick = function () { apiPost('warehouse.deactivate', { 창고코드: b.dataset.code }).then(loadMasters).catch(function (err) { alert(err.message); }); };
+  });
+
+  var fThead = document.getElementById('fxTable').querySelector('thead');
+  if (fThead) fThead.innerHTML = '<tr><th>통화</th><th>KRW환율</th><th>기준일자</th></tr>';
+  document.querySelector('#fxTable tbody').innerHTML = MASTERS.fx.map(function (f) {
+    return '<tr><td>' + f['통화코드'] + '</td><td class="num">' + fmtNum(f['KRW환율']) + '</td><td>' + f['기준일자'] + '</td></tr>';
+  }).join('');
+}
+
+document.getElementById('entSave').onclick = function () {
+  apiPost('entity.upsert', {
+    법인코드: document.getElementById('entCode').value.trim(), 법인명: document.getElementById('entName').value.trim(),
+    국내외구분: document.getElementById('entDomestic').value, 통화코드: document.getElementById('entCurrency').value.trim(),
+  }).then(loadMasters).catch(function (err) { alert(err.message); });
+};
+document.getElementById('whSave').onclick = function () {
+  apiPost('warehouse.upsert', {
+    창고코드: document.getElementById('whCode').value.trim(), 창고명: document.getElementById('whName').value.trim(),
+    국내외구분: document.getElementById('whDomestic').value,
+  }).then(loadMasters).catch(function (err) { alert(err.message); });
+};
+document.getElementById('fxSave').onclick = function () {
+  apiPost('fx.upsert', { 통화코드: document.getElementById('fxCode').value.trim(), 'KRW환율': document.getElementById('fxRate').value }).then(loadMasters).catch(function (err) { alert(err.message); });
+};
+
+/* ================= 초기화 ================= */
+document.getElementById('dashYm').value = currentYm();
+document.getElementById('checkYm').value = currentYm();
+refreshAdminUi();
+renderTxForm();
+if (apiUrl()) {
+  loadMasters().then(function () {
+    loadWarnings();
+    loadDashboard();
+    loadTxList();
+  }).catch(function (err) { document.getElementById('statusFooter').textContent = err.message; });
+} else {
+  document.getElementById('statusFooter').textContent = '설정 탭에서 Apps Script 웹앱 URL을 입력하면 시작됩니다.';
+}
+</script>
+</body>
+</html>
