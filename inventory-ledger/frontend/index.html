@@ -312,7 +312,8 @@ document.getElementById('mainTabs').addEventListener('click', function (e) {
   btn.classList.add('active');
   document.querySelectorAll('.panel').forEach(function (p) { p.classList.remove('active'); });
   document.getElementById('panel-' + btn.dataset.panel).classList.add('active');
-  // 탭 전환마다 자동으로 서버를 부르지 않는다 — 업로드 관리는 "새로고침" 버튼으로만 불러온다.
+  // 이미 불러온 적 있으면 그대로 두고(재요청 없음), 처음 보는 탭이면 한 번만 불러온다.
+  if (btn.dataset.panel === 'uploads' && !uploadsCache) loadUploads();
 });
 
 /* ---------------- 로그인 ---------------- */
@@ -460,7 +461,11 @@ document.getElementById('txTabs').addEventListener('click', function (e) {
   currentTx = btn.dataset.tx;
   renderTxForm();
   renderBulkUploadSection();
-  clearTxListPlaceholder(); // 탭 전환마다 자동으로 서버를 불러오면 느려지니, 필요할 때 새로고침 버튼으로만 불러온다
+  // 이미 한 번 불러온 탭이면 그 결과를 그대로 다시 보여주고(네트워크 호출 없음),
+  // 아직 한 번도 안 본 탭일 때만 처음 한 번 불러온다. 이후로는 새로고침 버튼이나
+  // 입력/업로드/삭제 직후에만 다시 불러온다.
+  if (txListCache[currentTx]) renderTxList(txListCache[currentTx]);
+  else loadTxList();
 });
 document.getElementById('txRefresh').onclick = loadTxList;
 
@@ -577,18 +582,19 @@ function submitTx() {
   }).catch(function (err) { alert('오류: ' + err.message); });
 }
 
-/** 탭을 옮길 때마다 자동으로 서버를 호출하지 않고, 새로고침 전까지는 안내문구만 보여준다. */
-function clearTxListPlaceholder() {
-  document.querySelector('#txListTable thead').innerHTML = '';
-  document.querySelector('#txListTable tbody').innerHTML = '<tr><td>새로고침을 눌러 최신 내역을 불러오세요.</td></tr>';
-}
+/** currentTx별로 마지막에 불러온 결과를 기억해둔다 — 탭을 오갈 때마다 다시 불러오지 않기 위함. */
+var txListCache = {};
 
 function loadTxList() {
   var typeMap = { '입고': '입고', '출고': '출고', '폐기': '폐기', '기부': '기부', '사간거래': '사간거래', '창고이동': '창고이동', '재고조정': '재고조정', '기말재고실측': '기말재고실측' };
+  var tx = currentTx;
   document.querySelector('#txListTable tbody').innerHTML = '<tr><td>불러오는 중...</td></tr>';
-  apiGet('tx', { type: typeMap[currentTx] }).then(function (rows) {
-    renderTxList(rows);
-  }).catch(function (err) { document.querySelector('#txListTable tbody').innerHTML = '<tr><td>' + err.message + '</td></tr>'; });
+  apiGet('tx', { type: typeMap[tx] }).then(function (rows) {
+    txListCache[tx] = rows;
+    if (currentTx === tx) renderTxList(rows); // 그 사이 다른 탭으로 옮겼으면 화면은 안 덮어씀
+  }).catch(function (err) {
+    if (currentTx === tx) document.querySelector('#txListTable tbody').innerHTML = '<tr><td>' + err.message + '</td></tr>';
+  });
 }
 
 function renderTxList(rows) {
@@ -1287,10 +1293,14 @@ function submitMultiUpload() {
 
 /* ================= 업로드 관리 ================= */
 document.getElementById('uploadsRefresh').onclick = loadUploads;
+var uploadsCache = null;
 
 function loadUploads() {
   document.querySelector('#uploadsTable tbody').innerHTML = '<tr><td>불러오는 중...</td></tr>';
-  apiGet('uploads').then(renderUploadsTable).catch(function (err) {
+  apiGet('uploads').then(function (rows) {
+    uploadsCache = rows;
+    renderUploadsTable(rows);
+  }).catch(function (err) {
     document.querySelector('#uploadsTable tbody').innerHTML = '<tr><td>' + err.message + '</td></tr>';
   });
 }
